@@ -1,0 +1,31 @@
+name: Macaroon
+options:
+  bundleIdPrefix: com.toddbruss
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    ENABLE_APP_SANDBOX: NO
+    ARCHS: arm64
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+targets:
+  Macaroon:
+    type: application
+    platform: macOS
+    sources:
+      - Macaroon
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.toddbruss.Macaroon
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Macaroon
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: 1
+    entitlements:
+      path: Macaroon/Macaroon.entitlements
+      properties:
+        com.apple.security.virtualization: true
