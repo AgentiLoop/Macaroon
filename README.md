@@ -12,4 +12,6 @@ A minimal macOS virtual machine app for Apple silicon, built on Apple's Virtuali
 
 VM files are stored in `~/Library/Application Support/Macaroon/VM`.
 
+**Snapshots** (toolbar menu): Take Snapshot clones `Disk.img` and `AuxiliaryStorage` into `VM/Snapshots/<date>/` using APFS copy-on-write, so it is near-instant and uses no extra space at first. If the VM is running, it is paused and its memory/device state is saved too, so restoring resumes exactly where it left off. Restore first saves a "Before Restore" snapshot, so you can always go back.
+
 Regenerate the project with `xcodegen generate` after editing `project.yml`.

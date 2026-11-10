@@ -23,6 +23,13 @@ struct RestoreImage: Identifiable, Hashable {
     var title: String { "macOS \(version) (\(build))" }
 }
 
+struct Snapshot: Identifiable, Hashable {
+    let url: URL
+    var id: URL { url }
+    var name: String { url.lastPathComponent }
+    var hasState: Bool { FileManager.default.fileExists(atPath: url.appendingPathComponent("State.vzvmsave").path) }
+}
+
 @MainActor
 final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, URLSessionDownloadDelegate {
     @Published var images: [RestoreImage] = []
@@ -41,6 +48,8 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     var machineIDURL: URL { root.appendingPathComponent("MachineIdentifier") }
     var ipswURL: URL { root.appendingPathComponent("Restore.ipsw") }
     var sharedURL: URL { root.appendingPathComponent("Shared") }
+    var snapshotsURL: URL { root.appendingPathComponent("Snapshots") }
+    @Published var snapshots: [Snapshot] = []
     var isInstalled: Bool { FileManager.default.fileExists(atPath: machineIDURL.path) }
 
     private var downloadContinuation: CheckedContinuation<URL, Error>?
@@ -49,6 +58,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     override init() {
         super.init()
         try? FileManager.default.createDirectory(at: sharedURL, withIntermediateDirectories: true)
+        loadSnapshots()
     }
 
     // MARK: Apple IPSW catalog
@@ -202,18 +212,23 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         return config
     }
 
+    private func makeMachine() throws -> VZVirtualMachine {
+        let platform = VZMacPlatformConfiguration()
+        guard let model = VZMacHardwareModel(dataRepresentation: try Data(contentsOf: modelURL)),
+              let id = VZMacMachineIdentifier(dataRepresentation: try Data(contentsOf: machineIDURL)) else {
+            throw NSError(domain: "Macaroon", code: 2, userInfo: [NSLocalizedDescriptionKey: "VM files are damaged. Delete the VM and reinstall."])
+        }
+        platform.hardwareModel = model
+        platform.machineIdentifier = id
+        platform.auxiliaryStorage = VZMacAuxiliaryStorage(url: auxURL)
+        let vm = VZVirtualMachine(configuration: try makeConfiguration(platform: platform, cpus: 4, memory: 4 * 1024 * 1024 * 1024))
+        vm.delegate = self
+        return vm
+    }
+
     func start() async {
         do {
-            let platform = VZMacPlatformConfiguration()
-            guard let model = VZMacHardwareModel(dataRepresentation: try Data(contentsOf: modelURL)),
-                  let id = VZMacMachineIdentifier(dataRepresentation: try Data(contentsOf: machineIDURL)) else {
-                throw NSError(domain: "Macaroon", code: 2, userInfo: [NSLocalizedDescriptionKey: "VM files are damaged. Delete the VM and reinstall."])
-            }
-            platform.hardwareModel = model
-            platform.machineIdentifier = id
-            platform.auxiliaryStorage = VZMacAuxiliaryStorage(url: auxURL)
-            let vm = VZVirtualMachine(configuration: try makeConfiguration(platform: platform, cpus: 4, memory: 4 * 1024 * 1024 * 1024))
-            vm.delegate = self
+            let vm = try makeMachine()
             machine = vm
             try await vm.start()
             running = true
@@ -223,6 +238,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             status = "Start failed: \(error.localizedDescription)"
         }
     }
+
 
     func stop() async {
         guard let machine, machine.canStop else { return }
@@ -245,6 +261,97 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         machine = nil
         running = false
         status = "VM stopped."
+    }
+
+    // MARK: Snapshots (APFS clones of the disk + aux storage, plus saved running state)
+
+    private let vmFiles = ["Disk.img", "AuxiliaryStorage"]
+    private let stateFile = "State.vzvmsave"
+
+    func loadSnapshots() {
+        let urls = (try? FileManager.default.contentsOfDirectory(at: snapshotsURL, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? []
+        snapshots = urls.map(Snapshot.init).sorted { $0.name > $1.name }
+    }
+
+    /// On APFS, copyItem makes a copy-on-write clone: instant, and no extra space until blocks change.
+    private func clone(_ names: [String], from source: URL, to destination: URL) throws {
+        for name in names {
+            let target = destination.appendingPathComponent(name)
+            try? FileManager.default.removeItem(at: target)
+            try FileManager.default.copyItem(at: source.appendingPathComponent(name), to: target)
+        }
+    }
+
+    @discardableResult
+    func takeSnapshot(label: String = "Snapshot") async -> Bool {
+        busy = true
+        defer { busy = false; loadSnapshots() }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        let folder = snapshotsURL.appendingPathComponent("\(formatter.string(from: Date())) \(label)")
+        var note = ""
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            if let machine, running {
+                status = "Pausing VM for snapshot…"
+                try await machine.pause()
+                do {
+                    try await machine.saveMachineStateTo(url: folder.appendingPathComponent(stateFile))
+                } catch {
+                    try? FileManager.default.removeItem(at: folder.appendingPathComponent(stateFile))
+                    note = " Disk only; running state not saved: \(error.localizedDescription)"
+                }
+                try clone(vmFiles, from: root, to: folder)
+                try await machine.resume()
+            } else {
+                try clone(vmFiles, from: root, to: folder)
+            }
+            status = "Saved snapshot \(folder.lastPathComponent).\(note)"
+            return true
+        } catch {
+            if let machine, machine.state == .paused { try? await machine.resume() }
+            try? FileManager.default.removeItem(at: folder)
+            status = "Snapshot failed: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func restore(_ snapshot: Snapshot) async {
+        // Keep the current state so you can always go back to it.
+        guard await takeSnapshot(label: "Before Restore") else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            if let machine, machine.canStop { try await machine.stop() }
+            machine = nil
+            running = false
+            try clone(vmFiles, from: snapshot.url, to: root)
+            guard snapshot.hasState else {
+                status = "Restored disk from \(snapshot.name). Press Start."
+                return
+            }
+            status = "Restoring running state from \(snapshot.name)…"
+            let vm = try makeMachine()
+            machine = vm
+            try await vm.restoreMachineStateFrom(url: snapshot.url.appendingPathComponent(stateFile))
+            try await vm.resume()
+            running = true
+            status = "Restored \(snapshot.name)."
+        } catch {
+            machine = nil
+            running = false
+            status = "Restore failed: \(error.localizedDescription)"
+        }
+    }
+
+    func delete(_ snapshot: Snapshot) {
+        do {
+            try FileManager.default.removeItem(at: snapshot.url)
+            status = "Deleted snapshot \(snapshot.name)."
+        } catch {
+            status = "Delete failed: \(error.localizedDescription)"
+        }
+        loadSnapshots()
     }
 
     // MARK: Drag an app in
@@ -295,6 +402,18 @@ struct ContentView: View {
                     .disabled(vm.busy || vm.running || !vm.isInstalled)
                 Button("Stop") { Task { await vm.stop() } }
                     .disabled(!vm.running)
+                Menu("Snapshots") {
+                    Button("Take Snapshot") { Task { await vm.takeSnapshot() } }
+                    if !vm.snapshots.isEmpty { Divider() }
+                    ForEach(vm.snapshots) { snapshot in
+                        Menu(snapshot.hasState ? "\(snapshot.name) (running state)" : snapshot.name) {
+                            Button("Restore") { Task { await vm.restore(snapshot) } }
+                            Button("Delete", role: .destructive) { vm.delete(snapshot) }
+                        }
+                    }
+                }
+                .fixedSize()
+                .disabled(vm.busy || !vm.isInstalled)
                 Button("Shared Folder") { NSWorkspace.shared.open(vm.sharedURL) }
             }
             .padding(10)
