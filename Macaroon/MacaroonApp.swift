@@ -39,12 +39,29 @@ struct Snapshot: Identifiable, Hashable {
     var hasState: Bool { FileManager.default.fileExists(atPath: url.appendingPathComponent("State.vzvmsave").path) }
 }
 
-/// macOS guests use Apple's Mac platform; Linux and Windows ARM boot from an ISO through the generic EFI platform.
+/// macOS guests use Apple's Mac platform; Linux, Arch and Windows ARM boot from an ISO through the generic EFI platform.
+/// Each guest has its own folder (disk, NVRAM), so Arch never boots the Ubuntu disk.
 enum GuestOS: String, CaseIterable, Identifiable {
-    case macOS, linux, windows
+    case macOS, linux, arch, windows
     var id: String { rawValue }
-    var title: String { self == .macOS ? "macOS" : self == .linux ? "Linux" : "Windows ARM" }
-    var folder: String { self == .macOS ? "VM" : self == .linux ? "Linux" : "Windows" }
+    var title: String {
+        switch self {
+        case .macOS: "macOS"
+        case .linux: "Linux"
+        case .arch: "Arch Linux ARM"
+        case .windows: "Windows ARM"
+        }
+    }
+    var folder: String {
+        switch self {
+        case .macOS: "VM"
+        case .linux: "Linux"
+        case .arch: "Arch"
+        case .windows: "Windows"
+        }
+    }
+    /// Ubuntu and Arch: SPICE clipboard, LinuxGL, Paste.
+    var isLinux: Bool { self == .linux || self == .arch }
 }
 
 @MainActor
@@ -350,21 +367,27 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     static let msProfile = "606624d44113"
     private let msSession = UUID().uuidString.lowercased()
 
-    /// Loads the Linux and Windows ISO lists together at launch, so switching guests later is instant.
+    /// Loads the Linux, Arch and Windows ISO lists together at launch, so switching guests later is instant.
     func loadISOCatalog() async {
         async let linux: Void = loadISOCatalog(.linux)
+        async let arch: Void = loadISOCatalog(.arch)
         async let windows: Void = loadISOCatalog(.windows)
-        _ = await (linux, windows)
+        _ = await (linux, arch, windows)
     }
 
     private func loadISOCatalog(_ wanted: GuestOS) async {
         guard wanted != .macOS else { return }
         do {
-            let found = wanted == .linux ? try await ubuntuISOs() : try await windowsISOs()
+            let found: [InstallerISO]
+            switch wanted {
+            case .linux: found = try await ubuntuISOs()
+            case .arch: found = try await archISO().map { [$0] } ?? []
+            default: found = try await windowsISOs()
+            }
             isoCache[wanted] = found
             guard guest == wanted else { return }
             showISOs()
-            if !isInstalled { status = "Choose a \(wanted == .linux ? "Ubuntu or Arch" : "Windows 11 ARM") ISO, then Download & Install." }
+            if !isInstalled { status = "Choose a \(wanted == .linux ? "Ubuntu" : wanted == .arch ? "Arch Linux ARM" : "Windows 11 ARM") ISO, then Download & Install." }
         } catch {
             guard guest == wanted else { return }
             status = "Could not load the \(wanted.title) ISO list: \(error.localizedDescription)"
@@ -401,7 +424,6 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
                 result.append(InstallerISO(title: "Ubuntu \(number) \(label) (arm64)", fileName: name, url: folder.appendingPathComponent(name)))
             }
         }
-        if let arch = try? await archISO() { result.append(arch) }
         return result
     }
 
@@ -530,7 +552,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         config.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
         try addCommonDevices(to: config)
         config.socketDevices = [VZVirtioSocketDeviceConfiguration()] // Windows guest agent, Linux GPU OpenGL (LinuxGL)
-        if guest == .linux {
+        if guest.isLinux {
             // Clipboard sharing through the SPICE agent port; Ubuntu Desktop's spice-vdagent picks it up
             let spice = VZSpiceAgentPortAttachment()
             spice.sharesClipboard = true
@@ -614,7 +636,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             running = true
             switch guest {
             case .macOS: status = "Running. Drag an app onto the window; in the VM open /Volumes/My Shared Files."
-            case .linux:
+            case .linux, .arch:
                 status = installerISO != nil ? "Booting the installer ISO. After installing, Stop and Eject ISO." : "Running. Shared folder: mount -t virtiofs com.apple.virtio-fs.automount /mnt"
                 linuxGL = LinuxGL(machine: vm)
                 if linuxGL != nil { // the installed system can boot with the ISO still attached, so don't wait for an eject
@@ -972,7 +994,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             HStack {
                 Picker("Guest", selection: $vm.guest) {
-                    ForEach(GuestOS.allCases) { Text($0 == .macOS ? "Mac" : $0 == .linux ? "Linux" : "Windows").tag($0) }
+                    ForEach(GuestOS.allCases) { Text($0 == .macOS ? "Mac" : $0 == .linux ? "Linux" : $0 == .arch ? "Arch" : "Windows").tag($0) }
                 }
                 .pickerStyle(.menu)
                 .fixedSize()
@@ -1023,7 +1045,7 @@ struct ContentView: View {
                     Button("Run Command…") { runCommand() }
                         .disabled(!vm.running)
                 }
-                if vm.guest == .linux {
+                if vm.guest.isLinux {
                     Button("Paste") { vm.typeClipboard() }
                         .help("Types the Mac clipboard's text into Linux")
                         .disabled(!vm.running)
