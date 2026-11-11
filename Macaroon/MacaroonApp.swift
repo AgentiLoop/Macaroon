@@ -573,6 +573,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
                     // Lets VMs installed before the guest agent existed install (or update) it from the shared folder
                     try? WindowsSetup.crlf(WindowsSetup.agentScript).write(to: sharedURL.appendingPathComponent("agent.ps1"), atomically: true, encoding: .utf8)
                     try? WindowsSetup.crlf(WindowsSetup.agentInstaller).write(to: sharedURL.appendingPathComponent("Install Macaroon Agent.cmd"), atomically: true, encoding: .utf8)
+                    try? WindowsSetup.crlf(WindowsSetup.gpuDriverRemoval).write(to: sharedURL.appendingPathComponent("viogpudo-remove.ps1"), atomically: true, encoding: .utf8)
                     try? WindowsSetup.copyResolutionService(from: base.appendingPathComponent("virtio-win.iso"), to: sharedURL)
                     clipboardTask = Task { await GuestAgent.syncClipboard(vm) }
                 }
@@ -596,6 +597,12 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             guestStopped()
             // Virtualization.framework stops the VM when the guest reboots, so setup restarts it
             if guest == .windows, setupPhase != nil { Task { await continueWindowsSetup() } }
+            // A restart the guest asked for (Install Macaroon Agent.cmd leaves this marker in the shared folder)
+            let restart = sharedURL.appendingPathComponent("Macaroon restart")
+            if guest == .windows, setupPhase == nil, (try? FileManager.default.removeItem(at: restart)) != nil {
+                status = "Windows is restarting…"
+                Task { await start() }
+            }
         }
     }
 
@@ -806,7 +813,9 @@ struct VMView: NSViewRepresentable {
 
     func updateNSView(_ view: VZVirtualMachineView, context: Context) {
         view.virtualMachine = machine
-        context.coordinator.attach(machine.graphicsDevices.first?.displays.first)
+        // Windows: host-side scaling only. Any guest display mode change crashes the patched viogpudo (bugcheck 0x124)
+        // and draws a corrupted picture with virtio-win's, so resizing the window must never resize the guest.
+        context.coordinator.attach(machine.socketDevices.isEmpty ? machine.graphicsDevices.first?.displays.first : nil)
     }
 
     static func dismantleNSView(_ view: VZVirtualMachineView, coordinator: Coordinator) {
@@ -848,20 +857,8 @@ struct VMView: NSViewRepresentable {
             let work = DispatchWorkItem { [weak self] in
                 guard let self else { return }
                 if !self.retina, let display = self.display, let size = self.view?.bounds.size, size.width > 0, size.height > 0 {
-                    // Multiples of 8: viogpudo scrambles the picture (wrong row stride) for other widths
                     let width = max(640, Int(size.width) / 8 * 8), height = max(480, Int(size.height) / 8 * 8)
-                    let previous = display.sizeInPixels
                     try? display.reconfigure(sizeInPixels: CGSize(width: width, height: height))
-                    // Windows: viogpudo now offers that size, but nothing in the guest switches to it, so the agent does.
-                    // If it can't (no agent, or one too old to know "resize"), Windows keeps drawing at its old size,
-                    // which the host would read with the new size's stride: scrambled. So go back to the old size.
-                    if let machine = self.view?.virtualMachine, !machine.socketDevices.isEmpty {
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .seconds(0.5))
-                            let reply = (try? await GuestAgent.request(machine, "resize \(width) \(height)")) ?? ""
-                            if reply != "ok" { try? display.reconfigure(sizeInPixels: previous) }
-                        }
-                    }
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.fit() }
             }
