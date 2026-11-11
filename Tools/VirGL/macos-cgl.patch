@@ -1,0 +1,80 @@
+--- a/vtest/meson.build	2026-11-11 11:09:20
++++ b/vtest/meson.build	2026-11-11 11:09:28
+@@ -71,6 +71,7 @@
+    virgl_test_server_sources,
+    link_with: [libvtest],
+    dependencies : [libvirglrenderer_dep, gallium_dep],
++   link_args : host_machine.system() == 'darwin' ? ['-framework', 'OpenGL'] : [],
+    install : true
+ )
+ 
+--- a/vtest/vtest_renderer.c	2026-11-11 11:09:20
++++ b/vtest/vtest_renderer.c	2026-11-11 11:09:20
+@@ -237,8 +237,53 @@
+    return fd;
+ }
+ 
++#ifdef __APPLE__
++/* macOS has neither EGL nor GLX: hand virglrenderer CGL contexts (OpenGL 4.1 core on Metal). */
++#include <OpenGL/OpenGL.h>
++
++static CGLContextObj vtest_cgl_root;
++
++static virgl_renderer_gl_context vtest_cgl_create(UNUSED void *cookie, UNUSED int scanout_idx,
++                                                  struct virgl_renderer_gl_ctx_param *param)
++{
++   if (param->major_ver > 4 || (param->major_ver == 4 && param->minor_ver > 1))
++      return NULL;
++   CGLPixelFormatAttribute attrs[] = {
++      kCGLPFAOpenGLProfile, (CGLPixelFormatAttribute)kCGLOGLPVersion_GL4_Core,
++      kCGLPFAAccelerated, kCGLPFAAllowOfflineRenderers, 0
++   };
++   CGLPixelFormatObj pix;
++   GLint count;
++   if (CGLChoosePixelFormat(attrs, &pix, &count) != kCGLNoError || !pix)
++      return NULL;
++   CGLContextObj ctx = NULL;
++   CGLCreateContext(pix, param->shared ? vtest_cgl_root : NULL, &ctx);
++   CGLReleasePixelFormat(pix);
++   if (ctx && !vtest_cgl_root)
++      vtest_cgl_root = ctx;
++   return (virgl_renderer_gl_context)ctx;
++}
++
++static void vtest_cgl_destroy(UNUSED void *cookie, virgl_renderer_gl_context ctx)
++{
++   if (ctx == (virgl_renderer_gl_context)vtest_cgl_root)
++      vtest_cgl_root = NULL;
++   CGLDestroyContext((CGLContextObj)ctx);
++}
++
++static int vtest_cgl_make_current(UNUSED void *cookie, UNUSED int scanout_idx, virgl_renderer_gl_context ctx)
++{
++   return CGLSetCurrentContext((CGLContextObj)ctx) == kCGLNoError ? 0 : -1;
++}
++#endif
++
+ static struct virgl_renderer_callbacks renderer_cbs = {
+    .version = VIRGL_RENDERER_CALLBACKS_VERSION,
++#ifdef __APPLE__
++   .create_gl_context = vtest_cgl_create,
++   .destroy_gl_context = vtest_cgl_destroy,
++   .make_current = vtest_cgl_make_current,
++#endif
+    .write_fence = vtest_write_implicit_fence,
+    .get_drm_fd = vtest_get_drm_fd,
+    .write_context_fence = vtest_write_context_fence,
+--- a/vtest/vtest_server.c	2026-11-11 11:09:20
++++ b/vtest/vtest_server.c	2026-11-11 11:09:20
+@@ -273,7 +273,11 @@
+    }
+ 
+    if (!server.no_virgl) {
++#ifdef __APPLE__
++      server.ctx_flags = 0; /* GL contexts come from the CGL callbacks in vtest_renderer.c */
++#else
+       server.ctx_flags = VIRGL_RENDERER_USE_EGL;
++#endif
+       if (server.use_glx) {
+          if (server.use_egl_surfaceless || server.use_gles) {
+             fprintf(stderr, "Cannot use surfaceless or GLES with GLX.\n");

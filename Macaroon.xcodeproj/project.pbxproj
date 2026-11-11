@@ -11,6 +11,7 @@
 		CC830C72795F4701DA62FDBE /* WindowsSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17FB5684CACE6538A7CDA0D /* WindowsSetup.swift */; };
 		82848BE2E005963A4E6CA660 /* WindowsEFIBinaries.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2985FC89D5FF5DB383362FF6 /* WindowsEFIBinaries.swift */; };
 		011606D6CE73F3ED5C2EDFA3 /* GuestAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 080E4893FEEBFE5AB2538A34 /* GuestAgent.swift */; };
+		7FED7E8386F2C395B1312A8D /* LinuxGL.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FB9079EC5101AFBFDBCAC2E /* LinuxGL.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -21,6 +22,7 @@
 		A17FB5684CACE6538A7CDA0D /* WindowsSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WindowsSetup.swift"; sourceTree = "<group>"; };
 		2985FC89D5FF5DB383362FF6 /* WindowsEFIBinaries.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WindowsEFIBinaries.swift"; sourceTree = "<group>"; };
 		080E4893FEEBFE5AB2538A34 /* GuestAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuestAgent.swift"; sourceTree = "<group>"; };
+		3FB9079EC5101AFBFDBCAC2E /* LinuxGL.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LinuxGL.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -32,6 +34,7 @@
 							A17FB5684CACE6538A7CDA0D /* WindowsSetup.swift */,
 				2985FC89D5FF5DB383362FF6 /* WindowsEFIBinaries.swift */,
 				080E4893FEEBFE5AB2538A34 /* GuestAgent.swift */,
+				3FB9079EC5101AFBFDBCAC2E /* LinuxGL.swift */,
 );
 			path = Macaroon;
 			sourceTree = "<group>";
@@ -114,6 +117,7 @@
 							CC830C72795F4701DA62FDBE /* WindowsSetup.swift in Sources */,
 				82848BE2E005963A4E6CA660 /* WindowsEFIBinaries.swift in Sources */,
 				011606D6CE73F3ED5C2EDFA3 /* GuestAgent.swift in Sources */,
+				7FED7E8386F2C395B1312A8D /* LinuxGL.swift in Sources */,
 );
 			runOnlyForDeploymentPostprocessing = 0;
 		};

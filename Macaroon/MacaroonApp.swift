@@ -492,7 +492,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         config.keyboards = [VZUSBKeyboardConfiguration()]
         config.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
         try addCommonDevices(to: config)
-        if guest == .windows { config.socketDevices = [VZVirtioSocketDeviceConfiguration()] } // guest agent
+        config.socketDevices = [VZVirtioSocketDeviceConfiguration()] // Windows guest agent, Linux GPU OpenGL (LinuxGL)
         if guest == .linux {
             // Clipboard sharing through the SPICE agent port; Ubuntu Desktop's spice-vdagent picks it up
             let spice = VZSpiceAgentPortAttachment()
@@ -577,7 +577,13 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             running = true
             switch guest {
             case .macOS: status = "Running. Drag an app onto the window; in the VM open /Volumes/My Shared Files."
-            case .linux: status = installerISO != nil ? "Booting the installer ISO. After installing, Stop and Eject ISO." : "Running. Shared folder: mount -t virtiofs com.apple.virtio-fs.automount /mnt"
+            case .linux:
+                status = installerISO != nil ? "Booting the installer ISO. After installing, Stop and Eject ISO." : "Running. Shared folder: mount -t virtiofs com.apple.virtio-fs.automount /mnt"
+                linuxGL = LinuxGL(machine: vm)
+                if linuxGL != nil, installerISO == nil {
+                    try? LinuxGL.guestSetupScript.write(to: sharedURL.appendingPathComponent("Set Up 3D.sh"), atomically: true, encoding: .utf8)
+                    status += ". GPU OpenGL: run sudo sh \"/mnt/Set Up 3D.sh\" once, then macaroon-gl <app>"
+                }
             case .windows:
                 status = setupPhase == "media" ? "Installing Windows from Media.img (WinPE, unattended). The VM powers off when done." : "Running."
                 if setupPhase == nil {
@@ -618,6 +624,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     }
 
     private var clipboardTask: Task<Void, Never>?
+    private var linuxGL: LinuxGL?
 
     /// Runs a cmd.exe command line in the Windows guest through the guest agent and returns its output.
     func runInWindows(_ command: String) async -> String {
@@ -651,6 +658,8 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     private func guestStopped() {
         clipboardTask?.cancel()
         clipboardTask = nil
+        linuxGL?.stop()
+        linuxGL = nil
         machine = nil
         running = false
         status = "VM stopped."
@@ -804,6 +813,8 @@ struct VMView: NSViewRepresentable {
     /// macOS guests get the window's full Retina pixel size. Windows/Linux get its size in points: asking them for
     /// Retina pixels only works with 200% scaling in the guest, which doubles everything when the driver doesn't follow.
     var retina = true
+    /// False for Windows, which keeps its boot mode (see Coordinator.settle).
+    var resizesGuest = true
 
     func makeNSView(context: Context) -> VZVirtualMachineView {
         let view = VZVirtualMachineView()
@@ -811,6 +822,7 @@ struct VMView: NSViewRepresentable {
         view.automaticallyReconfiguresDisplay = retina
         context.coordinator.view = view
         context.coordinator.retina = retina
+        context.coordinator.resizesGuest = resizesGuest
         Coordinator.current = view
         return view
     }
@@ -832,6 +844,7 @@ struct VMView: NSViewRepresentable {
         weak var view: VZVirtualMachineView?
         static weak var current: VZVirtualMachineView?
         var retina = true
+        var resizesGuest = true
         private var display: VZGraphicsDisplay?
         private var resizeObservers: [NSObjectProtocol] = []
         private var pending: DispatchWorkItem?
@@ -854,7 +867,7 @@ struct VMView: NSViewRepresentable {
         }
 
         /// Ask the guest for the view's size (points, when not Retina), then give it a moment to apply it before fitting.
-        /// Windows (the VM with a guest agent socket) keeps its 1920x1200 boot mode and is only scaled by the host:
+        /// Windows (resizesGuest false) keeps its 1920x1200 boot mode and is only scaled by the host:
         /// virtio-win's viogpudo can't change modes under Virtualization.framework (it unrefs the resource still on the
         /// scanout, so the new one is never created) and the host then reads the old picture at the new size's stride,
         /// which is the scrambled screen. The window still follows the guest's aspect ratio through fit().
@@ -862,8 +875,7 @@ struct VMView: NSViewRepresentable {
             pending?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 guard let self else { return }
-                if !self.retina, let display = self.display, let size = self.view?.bounds.size, size.width > 0, size.height > 0,
-                   self.view?.virtualMachine?.socketDevices.isEmpty ?? false {
+                if !self.retina, self.resizesGuest, let display = self.display, let size = self.view?.bounds.size, size.width > 0, size.height > 0 {
                     // Multiples of 8: viogpudo scrambles the picture (wrong row stride) for other widths
                     let width = max(640, Int(size.width) / 8 * 8), height = max(480, Int(size.height) / 8 * 8)
                     try? display.reconfigure(sizeInPixels: CGSize(width: width, height: height))
@@ -966,7 +978,7 @@ struct ContentView: View {
 
             ZStack {
                 if let machine = vm.machine, vm.running {
-                    VMView(machine: machine, retina: vm.guest == .macOS)
+                    VMView(machine: machine, retina: vm.guest == .macOS, resizesGuest: vm.guest != .windows)
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "desktopcomputer").font(.system(size: 64))
