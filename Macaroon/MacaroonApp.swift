@@ -613,8 +613,27 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         do {
             return try await GuestAgent.exec(machine, command)
         } catch {
-            return "The guest agent didn't answer (\(error.localizedDescription)). It starts when Windows logs on. If this VM was installed before the agent existed, press Win+R in Windows and run this once: powershell -c \"cd $env:TEMP; & 'Z:\\Install Macaroon Agent.cmd'\" (Windows can't start a program whose working folder is the shared drive, so opening the file from Z: fails with \"The directory name is invalid\")."
+            return "The guest agent didn't answer (\(error.localizedDescription)). It starts when Windows logs on. If this VM was installed before the agent existed, log on to Windows and press Install Guest Agent."
         }
+    }
+
+    /// For VMs set up before the guest agent existed: types Win+R and a command into Windows that finds
+    /// "Install Macaroon Agent.cmd" on whichever drive letter the shared folder got and runs it from %TEMP%
+    /// (Windows can't start a program whose working folder is the virtiofs drive).
+    func typeAgentInstall() async {
+        guard running, let view = VMView.Coordinator.current else { return }
+        let command = "powershell -w h -c \"gdr -p FileSystem|%{$f=$_.Root+'Install Macaroon Agent.cmd';if(test-path $f){cd $env:TEMP;&$f}}\""
+        status = "Typing the agent installer command into Windows (Win+R)…"
+        view.window?.makeKeyAndOrderFront(nil)
+        view.window?.makeFirstResponder(view)
+        GuestKeyboard.press(15, in: view, modifier: (55, .command)) // Win+R
+        try? await Task.sleep(for: .seconds(1.5))
+        GuestKeyboard.type(command, in: view)
+        GuestKeyboard.press(36, in: view) // Return
+        try? await Task.sleep(for: .seconds(8))
+        guard let machine else { return }
+        let reply = (try? await GuestAgent.exec(machine, "ver")) ?? ""
+        status = reply.isEmpty ? "Typed the installer command, but the agent hasn't answered yet. Make sure you're logged on to the Windows desktop, then try again." : "Guest agent installed and running."
     }
 
     private func guestStopped() {
@@ -737,6 +756,37 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     }
 }
 
+/// Sends keystrokes to the guest through the VM view (US layout), for when no guest agent is running.
+@MainActor
+enum GuestKeyboard {
+    private static let unshifted = Array("asdfhgzxcv\u{0}bqweryt123465=97-80]ou[ip\u{0}lj'k;\\,/nm.\u{0}\u{0}`")
+    private static let shifted = Array("ASDFHGZXCV\u{0}BQWERYT!@#$^%+(&_*)}OU{IP\u{0}LJ\"K:|<?NM>\u{0}\u{0}~")
+
+    static func type(_ text: String, in view: NSView) {
+        for ch in text {
+            if ch == " " { press(49, in: view); continue }
+            if let i = unshifted.firstIndex(of: ch) {
+                press(UInt16(i), in: view)
+            } else if let i = shifted.firstIndex(of: ch) {
+                press(UInt16(i), in: view, modifier: (56, .shift))
+            }
+        }
+    }
+
+    static func press(_ keyCode: UInt16, in view: NSView, modifier: (UInt16, NSEvent.ModifierFlags)? = nil) {
+        func event(_ type: NSEvent.EventType, _ code: UInt16, _ flags: NSEvent.ModifierFlags) -> NSEvent {
+            NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                             windowNumber: view.window?.windowNumber ?? 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+                             isARepeat: false, keyCode: code)!
+        }
+        let flags = modifier?.1 ?? []
+        if let (code, f) = modifier { view.flagsChanged(with: event(.flagsChanged, code, f)) }
+        view.keyDown(with: event(.keyDown, keyCode, flags))
+        view.keyUp(with: event(.keyUp, keyCode, flags))
+        if let (code, _) = modifier { view.flagsChanged(with: event(.flagsChanged, code, [])) }
+    }
+}
+
 struct VMView: NSViewRepresentable {
     let machine: VZVirtualMachine
 
@@ -747,6 +797,7 @@ struct VMView: NSViewRepresentable {
         view.capturesSystemKeys = true
         view.automaticallyReconfiguresDisplay = true
         context.coordinator.view = view
+        Coordinator.current = view
         return view
     }
 
@@ -765,6 +816,7 @@ struct VMView: NSViewRepresentable {
     /// which leaves the picture letterboxed. Once the guest settles, reshape the window to its aspect ratio.
     final class Coordinator: NSObject, VZGraphicsDisplayObserver {
         weak var view: VZVirtualMachineView?
+        static weak var current: VZVirtualMachineView?
         private var display: VZGraphicsDisplay?
         private var resizeObservers: [NSObjectProtocol] = []
         private var pending: DispatchWorkItem?
@@ -876,6 +928,8 @@ struct ContentView: View {
                 Button("Shared Folder") { NSWorkspace.shared.open(vm.sharedURL) }
                 if vm.guest == .windows {
                     Button("Run Command…") { runCommand() }
+                        .disabled(!vm.running)
+                    Button("Install Guest Agent") { Task { await vm.typeAgentInstall() } }
                         .disabled(!vm.running)
                 }
             }
