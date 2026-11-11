@@ -991,6 +991,13 @@ struct ContentView: View {
             vm.status = "Ran \(command) in Windows."
             let result = NSAlert()
             result.messageText = command
+            let outputURL = vm.base.appendingPathComponent("LastCommandOutput.txt")
+            do {
+                try "Command: \(command)\n\n\(output)".write(to: outputURL, atomically: true, encoding: .utf8)
+                result.informativeText = "Output saved to \(outputURL.path)"
+            } catch {
+                result.informativeText = "Could not save output: \(error.localizedDescription)"
+            }
             let scroll = NSTextView.scrollableTextView()
             scroll.frame = NSRect(x: 0, y: 0, width: 640, height: 360)
             let text = scroll.documentView as! NSTextView
