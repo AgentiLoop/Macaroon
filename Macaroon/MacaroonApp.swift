@@ -824,6 +824,7 @@ struct VMView: NSViewRepresentable {
         private var display: VZGraphicsDisplay?
         private var resizeObservers: [NSObjectProtocol] = []
         private var pending: DispatchWorkItem?
+        private var agentResize: Task<Void, Never>?
 
         func attach(_ newDisplay: VZGraphicsDisplay?) {
             guard newDisplay !== display else { return }
@@ -853,13 +854,21 @@ struct VMView: NSViewRepresentable {
                     let previous = display.sizeInPixels
                     try? display.reconfigure(sizeInPixels: CGSize(width: width, height: height))
                     // Windows: viogpudo now offers that size, but nothing in the guest switches to it, so the agent does.
-                    // If it can't (no agent, or one too old to know "resize"), Windows keeps drawing at its old size,
-                    // which the host would read with the new size's stride: scrambled. So go back to the old size.
+                    // While Windows boots the agent isn't listening yet: keep asking until it is, and don't fall back
+                    // meanwhile (Windows comes back at the size the agent last saved, i.e. the window's).
+                    // If the agent answers but can't switch (or is too old to know "resize"), Windows keeps drawing
+                    // at its old size, which the host would read with the new size's stride: scrambled. So go back.
+                    self.agentResize?.cancel()
                     if let machine = self.view?.virtualMachine, !machine.socketDevices.isEmpty {
-                        Task { @MainActor in
+                        self.agentResize = Task { @MainActor in
                             try? await Task.sleep(for: .seconds(0.5))
-                            let reply = (try? await GuestAgent.request(machine, "resize \(width) \(height)")) ?? ""
-                            if reply != "ok" { try? display.reconfigure(sizeInPixels: previous) }
+                            for _ in 0..<150 where !Task.isCancelled {
+                                if let reply = try? await GuestAgent.request(machine, "resize \(width) \(height)") {
+                                    if reply != "ok" { try? display.reconfigure(sizeInPixels: previous) }
+                                    return
+                                }
+                                try? await Task.sleep(for: .seconds(2))
+                            }
                         }
                     }
                 }
