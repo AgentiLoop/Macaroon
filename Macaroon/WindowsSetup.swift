@@ -352,6 +352,8 @@ enum WindowsSetup {
         copy /y %T%\winfsp.msi W:\ProgramData\Macaroon\winfsp.msi >> %LOG% || goto fail
         copy /y %T%\virtiofs.exe W:\ProgramData\Macaroon\virtiofs.exe >> %LOG% || goto fail
         copy /y %T%\agent.ps1 W:\ProgramData\Macaroon\agent.ps1 >> %LOG% || goto fail
+        copy /y %T%\drivers\viogpudo\vgpusrv.exe W:\ProgramData\Macaroon\vgpusrv.exe >> %LOG% || goto fail
+        copy /y %T%\drivers\viogpudo\viogpuap.exe W:\ProgramData\Macaroon\viogpuap.exe >> %LOG% || goto fail
 
         echo [%time%] boot files >> %LOG%
         bcdboot W:\Windows /s S: /f UEFI >> %LOG% 2>&1 || goto fail
@@ -378,6 +380,13 @@ enum WindowsSetup {
         powercfg /hibernate off
         start /wait "" msiexec /i C:\ProgramData\Macaroon\winfsp.msi /qn /norestart
         sc create VirtioFsSvc binpath= C:\ProgramData\Macaroon\virtiofs.exe start= auto depend= WinFsp.Launcher/VirtioFsDrv DisplayName= "Virtio FS Service"
+        rem VioGpu Resolution Service: makes viogpudo follow the size Macaroon's window asks for (Retina pixels)
+        C:\ProgramData\Macaroon\vgpusrv.exe -i
+        rem 200% scaling for the new user, so the Retina-sized desktop is readable
+        reg load HKU\MacaroonDefault C:\Users\Default\NTUSER.DAT
+        reg add "HKU\MacaroonDefault\Control Panel\Desktop" /v LogPixels /t REG_DWORD /d 192 /f
+        reg add "HKU\MacaroonDefault\Control Panel\Desktop" /v Win8DpiScaling /t REG_DWORD /d 1 /f
+        reg unload HKU\MacaroonDefault
         reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run /v MacaroonAgent /t REG_SZ /d "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\ProgramData\Macaroon\agent.ps1" /f
         set WL="HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
         reg add %WL% /v AutoAdminLogon /t REG_SZ /d 1 /f
