@@ -10,7 +10,7 @@ struct MacaroonApp: App {
         WindowGroup {
             ContentView(vm: vm)
                 .frame(minWidth: 1000, minHeight: 700)
-                .task { await vm.loadCatalog() }
+                .task { await vm.loadCatalog(); await vm.loadISOCatalog() }
         }
     }
 }
@@ -21,6 +21,15 @@ struct RestoreImage: Identifiable, Hashable {
     let url: URL
     var id: String { url.absoluteString }
     var title: String { "macOS \(version) (\(build))" }
+}
+
+/// A Linux or Windows ARM installer ISO. Ubuntu has a direct URL; Windows has a Microsoft SKU whose link is requested at download time.
+struct InstallerISO: Identifiable, Hashable {
+    let title: String
+    let fileName: String
+    var url: URL? = nil
+    var sku: String? = nil
+    var id: String { title }
 }
 
 struct Snapshot: Identifiable, Hashable {
@@ -54,8 +63,11 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             status = isInstalled ? "\(guest.title) VM installed. Press Start." : guest == .macOS
                 ? "Choose a macOS IPSW from Apple, then Download & Install."
                 : "Choose an ARM64 \(guest.title) installer ISO."
+            Task { await loadISOCatalog() }
         }
     }
+    @Published var isos: [InstallerISO] = []
+    @Published var selectedISO: InstallerISO?
 
     static let catalogURL = URL(string: "https://mesu.apple.com/assets/macos/com_apple_macOSIPSW/com_apple_macOSIPSW.xml")!
     let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Macaroon")
@@ -239,6 +251,125 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         try? FileManager.default.removeItem(at: isoPathURL)
         objectWillChange.send()
         status = "Installer ISO ejected. The VM boots from its disk next Start."
+    }
+
+    // MARK: ISO catalogs (Ubuntu from cdimage.ubuntu.com, Windows 11 ARM from Microsoft)
+
+    static let ubuntuReleases = URL(string: "https://cdimage.ubuntu.com/ubuntu/releases/")!
+    static let windowsPage = URL(string: "https://www.microsoft.com/en-us/software-download/windows11arm64")!
+    static let msProfile = "606624d44113"
+    private let msSession = UUID().uuidString.lowercased()
+
+    func loadISOCatalog() async {
+        let wanted = guest
+        guard wanted != .macOS else { return }
+        isos = []
+        selectedISO = nil
+        do {
+            let found = wanted == .linux ? try await ubuntuISOs() : try await windowsISOs()
+            guard guest == wanted else { return }
+            isos = found
+            selectedISO = wanted == .windows ? found.first { $0.title.hasSuffix("– English") } ?? found.first : found.first
+            if !isInstalled { status = "Choose a \(wanted == .linux ? "Ubuntu" : "Windows 11 ARM") ISO, then Download & Install." }
+        } catch {
+            guard guest == wanted else { return }
+            status = "Could not load the \(wanted.title) ISO list: \(error.localizedDescription)"
+        }
+    }
+
+    /// The newest point release of each Ubuntu release (22.04 and later), desktop and server, arm64.
+    private func ubuntuISOs() async throws -> [InstallerISO] {
+        let (index, _) = try await URLSession.shared.data(from: Self.ubuntuReleases)
+        let html = String(decoding: index, as: UTF8.self)
+        let found: [String] = html.matches(of: try Regex(#"href="(\d+\.\d+)/""#)).compactMap { match in
+            match.output[1].substring.map { String($0) }
+        }
+        let versions: [String] = Set(found)
+            .filter { $0.compare("22.04", options: .numeric) != .orderedAscending }
+            .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
+        var result: [InstallerISO] = []
+        for version in versions {
+            let folder = Self.ubuntuReleases.appendingPathComponent("\(version)/release/")
+            guard let (sums, _) = try? await URLSession.shared.data(from: folder.appendingPathComponent("SHA256SUMS")) else { continue }
+            let names = String(decoding: sums, as: UTF8.self).matches(of: try Regex(#"ubuntu-[\d.]+-(?:desktop|live-server)-arm64\.iso"#)).map { String($0.output[0].substring ?? "") }
+            for (flavor, label) in [("-desktop-", "Desktop"), ("-live-server-", "Server")] {
+                guard let name = names.filter({ $0.contains(flavor) }).max(by: { $0.compare($1, options: .numeric) == .orderedAscending }) else { continue }
+                let number = name.dropFirst("ubuntu-".count).prefix { $0.isNumber || $0 == "." }
+                result.append(InstallerISO(title: "Ubuntu \(number) \(label) (arm64)", fileName: name, url: folder.appendingPathComponent(name)))
+            }
+        }
+        return result
+    }
+
+    private func msRequest(_ path: String) -> URLRequest {
+        var request = URLRequest(url: URL(string: "https://www.microsoft.com/software-download-connector/api/\(path)&Locale=en-US&sessionID=\(msSession)")!)
+        request.setValue(Self.windowsPage.absoluteString, forHTTPHeaderField: "Referer")
+        return request
+    }
+
+    /// One entry per language of Microsoft's Windows 11 ARM64 multi-edition ISO.
+    private func windowsISOs() async throws -> [InstallerISO] {
+        let (page, _) = try await URLSession.shared.data(from: Self.windowsPage)
+        guard let edition = String(decoding: page, as: UTF8.self).firstMatch(of: try Regex(#"option value="(\d+)""#))?.output[1].substring else {
+            throw NSError(domain: "Macaroon", code: 3, userInfo: [NSLocalizedDescriptionKey: "Microsoft's download page has no ARM64 edition."])
+        }
+        _ = try? await URLSession.shared.data(from: URL(string: "https://vlscppe.microsoft.com/tags?org_id=y6jn8c31&session_id=\(msSession)")!)
+        let (data, _) = try await URLSession.shared.data(for: msRequest("getskuinformationbyproductedition?profile=\(Self.msProfile)&ProductEditionId=\(edition)&SKU=undefined&friendlyFileName=undefined"))
+        let skus = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["Skus"] as? [[String: Any]] ?? []
+        return skus.compactMap { sku in
+            guard let id = sku["Id"] as? String, let language = sku["Language"] as? String else { return nil }
+            let product = (sku["ProductDisplayName"] as? String) ?? "Windows 11 ARM64"
+            return InstallerISO(title: "\(product) – \(language)", fileName: "Windows11-ARM64-\(language).iso", sku: id)
+        }
+    }
+
+    /// Microsoft often rejects non-browser link requests ("Sentinel"); nil means use the browser instead.
+    private func windowsDownloadURL(sku: String) async -> URL? {
+        guard let (data, _) = try? await URLSession.shared.data(for: msRequest("GetProductDownloadLinksBySku?profile=\(Self.msProfile)&productEditionId=undefined&SKU=\(sku)&friendlyFileName=undefined")),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let options = json["ProductDownloadOptions"] as? [[String: Any]],
+              let uri = options.compactMap({ $0["Uri"] as? String }).first else { return nil }
+        return URL(string: uri)
+    }
+
+    /// A finished Windows ARM64 ISO in ~/Downloads (Safari/Chrome only rename it to .iso once complete).
+    private var downloadedWindowsISO: URL? {
+        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+        let files = (try? FileManager.default.contentsOfDirectory(at: downloads, includingPropertiesForKeys: nil)) ?? []
+        return files.first { $0.lastPathComponent.lowercased().hasPrefix("win11") && $0.lastPathComponent.lowercased().hasSuffix("arm64.iso") }
+    }
+
+    func downloadAndInstallISO() async {
+        guard let iso = selectedISO else { return }
+        let wanted = guest
+        busy = true
+        defer { busy = false; progress = nil }
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            var file = root.appendingPathComponent(iso.fileName)
+            if !FileManager.default.fileExists(atPath: file.path) {
+                if wanted == .windows, let local = downloadedWindowsISO {
+                    file = local
+                } else if let url = iso.url {
+                    status = "Downloading \(iso.title)…"
+                    try FileManager.default.moveItem(at: try await download(url), to: file)
+                } else if let sku = iso.sku, let url = await windowsDownloadURL(sku: sku) {
+                    status = "Downloading \(iso.title)…"
+                    try FileManager.default.moveItem(at: try await download(url), to: file)
+                } else {
+                    // Microsoft blocked the direct link: download in the browser and pick it up from ~/Downloads.
+                    NSWorkspace.shared.open(Self.windowsPage)
+                    status = "Microsoft requires its web page: choose the language, click Download (64-bit ARM). Waiting for Win11…Arm64.iso in Downloads…"
+                    while guest == wanted, downloadedWindowsISO == nil { try await Task.sleep(for: .seconds(3)) }
+                    guard let local = downloadedWindowsISO else { return }
+                    file = local
+                }
+            }
+            guard guest == wanted else { return }
+            await installFromISO(file)
+        } catch {
+            status = "Failed: \(error.localizedDescription)"
+        }
     }
 
     private func makeEFIConfiguration() throws -> VZVirtualMachineConfiguration {
@@ -526,6 +657,13 @@ struct ContentView: View {
                     Button("Download & Install") { Task { await vm.downloadAndInstall() } }
                         .disabled(vm.busy || vm.running || vm.selected == nil)
                 } else {
+                    Picker("ISO", selection: $vm.selectedISO) {
+                        ForEach(vm.isos) { Text($0.title).tag(Optional($0)) }
+                    }
+                    .frame(maxWidth: 320)
+                    .disabled(vm.busy || vm.running)
+                    Button("Download & Install") { Task { await vm.downloadAndInstallISO() } }
+                        .disabled(vm.busy || vm.running || vm.selectedISO == nil)
                     Button(vm.isInstalled ? "Attach ISO…" : "Install from ISO…") { chooseISO() }
                         .disabled(vm.busy || vm.running)
                     if let iso = vm.installerISO {
@@ -562,7 +700,7 @@ struct ContentView: View {
                         Image(systemName: "desktopcomputer").font(.system(size: 64))
                         Text(vm.isInstalled ? "Press Start to boot the VM." : vm.guest == .macOS
                              ? "Pick an IPSW and press Download & Install."
-                             : "Press Install from ISO… and choose an ARM64 (aarch64) \(vm.guest.title) ISO.")
+                             : "Pick an ISO and press Download & Install, or use Install from ISO… with your own ARM64 ISO.")
                         Text("Drag an .app here to copy it into the VM.").foregroundStyle(.secondary)
                     }
                 }
