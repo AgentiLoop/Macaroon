@@ -226,17 +226,10 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
 
     /// Creates an EFI VM (NVRAM, machine ID, 64 GB disk) for the selected guest and boots it from the ISO.
     func installFromISO(_ iso: URL) async {
+        if guest == .windows { return await installWindows(from: iso) }
         do {
             if !isInstalled {
-                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-                _ = try VZEFIVariableStore(creatingVariableStoreAt: nvramURL, options: [.allowOverwrite])
-                if !FileManager.default.fileExists(atPath: diskURL.path) {
-                    FileManager.default.createFile(atPath: diskURL.path, contents: nil)
-                    let handle = try FileHandle(forWritingTo: diskURL)
-                    try handle.truncate(atOffset: 64 * 1024 * 1024 * 1024) // 64 GB sparse disk
-                    try handle.close()
-                }
-                try VZGenericMachineIdentifier().dataRepresentation.write(to: machineIDURL)
+                try createEFIMachine()
             }
             try iso.path.write(to: isoPathURL, atomically: true, encoding: .utf8)
             objectWillChange.send()
@@ -246,6 +239,88 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         }
         await start()
     }
+
+    private func createEFIMachine() throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        _ = try VZEFIVariableStore(creatingVariableStoreAt: nvramURL, options: [.allowOverwrite])
+        if !FileManager.default.fileExists(atPath: diskURL.path) {
+            FileManager.default.createFile(atPath: diskURL.path, contents: nil)
+            let handle = try FileHandle(forWritingTo: diskURL)
+            try handle.truncate(atOffset: 64 * 1024 * 1024 * 1024) // 64 GB sparse disk
+            try handle.close()
+        }
+        try VZGenericMachineIdentifier().dataRepresentation.write(to: machineIDURL)
+    }
+
+    // MARK: Windows unattended install (see WindowsSetup)
+
+    var mediaURL: URL { root.appendingPathComponent("Media.img") }
+    /// "media" while WinPE installs from Media.img, "firstboot" while Windows sets itself up; absent otherwise.
+    var setupPhaseURL: URL { root.appendingPathComponent("WindowsSetup") }
+    private var setupPhase: String? { try? String(contentsOf: setupPhaseURL, encoding: .utf8) }
+
+    /// Repacks the ISO into Media.img, then boots a fresh VM from it. The VM powers off and restarts by itself
+    /// a few times; `guestDidStop` drives the rest.
+    func installWindows(from iso: URL) async {
+        busy = true
+        defer { busy = false; progress = nil }
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let virtioWin = base.appendingPathComponent("virtio-win.iso")
+            if !FileManager.default.fileExists(atPath: virtioWin.path) {
+                status = "Downloading the virtio-win drivers…"
+                try FileManager.default.moveItem(at: try await download(WindowsSetup.virtioWinURL), to: virtioWin)
+                progress = nil
+            }
+            status = "Downloading WinFsp…"
+            let winFsp = try await WindowsSetup.winFsp(cache: base)
+            let media = mediaURL
+            try await Task.detached {
+                try WindowsSetup.createMedia(at: media, iso: iso, virtioWin: virtioWin, winFsp: winFsp) { step in
+                    Task { @MainActor in self.status = step }
+                }
+            }.value
+            // Fresh disk and NVRAM: install.cmd installs onto the one empty disk
+            try? FileManager.default.removeItem(at: diskURL)
+            try createEFIMachine()
+            try media.path.write(to: isoPathURL, atomically: true, encoding: .utf8)
+            try "media".write(to: setupPhaseURL, atomically: true, encoding: .utf8)
+            objectWillChange.send()
+        } catch {
+            status = "Failed: \(error.localizedDescription)"
+            return
+        }
+        await start()
+    }
+
+    /// Called whenever the guest powers off or reboots during setup.
+    private func continueWindowsSetup() async {
+        switch setupPhase {
+        case "media":
+            status = "Checking the install result…"
+            if let failure = await (Task.detached { [mediaURL] in WindowsSetup.mediaFailure(mediaURL) }).value {
+                try? FileManager.default.removeItem(at: setupPhaseURL)
+                status = "Windows install failed (Media.img kept): \(failure)"
+                return
+            }
+            try? FileManager.default.removeItem(at: isoPathURL)
+            try? "firstboot".write(to: setupPhaseURL, atomically: true, encoding: .utf8)
+            objectWillChange.send()
+        case "firstboot":
+            if await (Task.detached { [diskURL] in WindowsSetup.firstBootFinished(diskURL) }).value {
+                try? FileManager.default.removeItem(at: setupPhaseURL)
+                try? FileManager.default.removeItem(at: mediaURL)
+                await start()
+                status = "Windows installed. User \(WindowsSetup.username), password \(WindowsSetup.password)."
+                return
+            }
+        default:
+            return
+        }
+        await start()
+        status = "Windows is setting itself up; it restarts a few times on its own…"
+    }
+
 
     func ejectISO() {
         try? FileManager.default.removeItem(at: isoPathURL)
@@ -411,7 +486,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             VZNVMExpressControllerDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: diskURL, readOnly: false))
         ]
         if let iso = installerISO {
-            storage.append(VZUSBMassStorageDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: iso, readOnly: true)))
+            storage.append(VZUSBMassStorageDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: iso, readOnly: iso.pathExtension.lowercased() == "iso")))
         }
         config.storageDevices = storage
         config.keyboards = [VZUSBKeyboardConfiguration()]
@@ -491,7 +566,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             switch guest {
             case .macOS: status = "Running. Drag an app onto the window; in the VM open /Volumes/My Shared Files."
             case .linux: status = installerISO != nil ? "Booting the installer ISO. After installing, Stop and Eject ISO." : "Running. Shared folder: mount -t virtiofs com.apple.virtio-fs.automount /mnt"
-            case .windows: status = installerISO != nil ? "Booting the installer ISO. After installing, Stop and Eject ISO." : "Running."
+            case .windows: status = setupPhase == "media" ? "Installing Windows from Media.img (WinPE, unattended). The VM powers off when done." : "Running."
             }
         } catch {
             machine = nil
@@ -508,7 +583,11 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     }
 
     nonisolated func guestDidStop(_ virtualMachine: VZVirtualMachine) {
-        MainActor.assumeIsolated { guestStopped() }
+        MainActor.assumeIsolated {
+            guestStopped()
+            // Virtualization.framework stops the VM when the guest reboots, so setup restarts it
+            if guest == .windows, setupPhase != nil { Task { await continueWindowsSetup() } }
+        }
     }
 
     nonisolated func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: Error) {
@@ -638,11 +717,13 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
 
 struct VMView: NSViewRepresentable {
     let machine: VZVirtualMachine
+    // Windows' stock virtio GPU driver shows a corrupted picture after a resolution change, so Windows keeps its size.
+    var resizes = true
 
     func makeNSView(context: Context) -> VZVirtualMachineView {
         let view = VZVirtualMachineView()
         view.capturesSystemKeys = true
-        view.automaticallyReconfiguresDisplay = true
+        view.automaticallyReconfiguresDisplay = resizes
         return view
     }
 
@@ -680,7 +761,7 @@ struct ContentView: View {
                     .disabled(vm.busy || vm.running)
                     Button("Download & Install") { Task { await vm.downloadAndInstallISO() } }
                         .disabled(vm.busy || vm.running || vm.selectedISO == nil)
-                    Button(vm.isInstalled ? "Attach ISO…" : "Install from ISO…") { chooseISO() }
+                    Button(vm.isInstalled && vm.guest != .windows ? "Attach ISO…" : "Install from ISO…") { chooseISO() }
                         .disabled(vm.busy || vm.running)
                     if let iso = vm.installerISO {
                         Button("Eject \(iso.lastPathComponent)") { vm.ejectISO() }
@@ -710,7 +791,7 @@ struct ContentView: View {
 
             ZStack {
                 if let machine = vm.machine, vm.running {
-                    VMView(machine: machine)
+                    VMView(machine: machine, resizes: vm.guest != .windows)
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "desktopcomputer").font(.system(size: 64))

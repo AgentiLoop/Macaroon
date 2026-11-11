@@ -8,12 +8,17 @@
 
 /* Begin PBXBuildFile section */
 		EFFA5D3A58EB0FC5C4927941 /* MacaroonApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60889651FD8C949C10C8FC2A /* MacaroonApp.swift */; };
+		CC830C72795F4701DA62FDBE /* WindowsSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17FB5684CACE6538A7CDA0D /* WindowsSetup.swift */; };
+		82848BE2E005963A4E6CA660 /* WindowsEFIBinaries.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2985FC89D5FF5DB383362FF6 /* WindowsEFIBinaries.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		60889651FD8C949C10C8FC2A /* MacaroonApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacaroonApp.swift; sourceTree = "<group>"; };
 		CD91FBE2A2BB0105E500B60C /* Macaroon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Macaroon.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		DE4FD7CABAC0AF863F1DF7B6 /* Macaroon.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Macaroon.entitlements; sourceTree = "<group>"; };
+		B9A87D8CE22B458E7CB0A979 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = text; path = "AppIcon.icon"; sourceTree = "<group>"; };
+		A17FB5684CACE6538A7CDA0D /* WindowsSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WindowsSetup.swift"; sourceTree = "<group>"; };
+		2985FC89D5FF5DB383362FF6 /* WindowsEFIBinaries.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WindowsEFIBinaries.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -22,7 +27,9 @@
 			children = (
 				DE4FD7CABAC0AF863F1DF7B6 /* Macaroon.entitlements */,
 				60889651FD8C949C10C8FC2A /* MacaroonApp.swift */,
-			);
+							A17FB5684CACE6538A7CDA0D /* WindowsSetup.swift */,
+				2985FC89D5FF5DB383362FF6 /* WindowsEFIBinaries.swift */,
+);
 			path = Macaroon;
 			sourceTree = "<group>";
 		};
@@ -101,7 +108,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				EFFA5D3A58EB0FC5C4927941 /* MacaroonApp.swift in Sources */,
-			);
+							CC830C72795F4701DA62FDBE /* WindowsSetup.swift in Sources */,
+				82848BE2E005963A4E6CA660 /* WindowsEFIBinaries.swift in Sources */,
+);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
