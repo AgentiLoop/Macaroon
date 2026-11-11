@@ -212,6 +212,18 @@ enum WindowsSetup {
         return String(decoding: outData, as: UTF8.self)
     }
 
+    /// For VMs installed before setup added it: puts virtio-win's VioGpu Resolution Service where the agent installer finds it.
+    /// vgpusrv.exe starts viogpuap.exe from its own folder in the user's session, so both are needed.
+    static func copyResolutionService(from virtioWin: URL, to folder: URL) throws {
+        let names = ["vgpusrv.exe", "viogpuap.exe"]
+        guard names.contains(where: { !FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path) }) else { return }
+        let root = try attachISO(virtioWin)
+        defer { detach(root.path) }
+        for name in names where !FileManager.default.fileExists(atPath: folder.appendingPathComponent(name).path) {
+            try FileManager.default.copyItem(at: root.appendingPathComponent("viogpudo/w11/ARM64/\(name)"), to: folder.appendingPathComponent(name))
+        }
+    }
+
     private static func attachISO(_ iso: URL) throws -> URL {
         let point = FileManager.default.temporaryDirectory.appendingPathComponent("macaroon-iso-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: point, withIntermediateDirectories: true)
@@ -411,6 +423,18 @@ enum WindowsSetup {
         copy /y "%~dp0agent.ps1" "%A%\agent.ps1" || (pause & exit /b 1)
         reg add HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v MacaroonAgent /t REG_SZ /d "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"%A%\agent.ps1\"" /f
         start "" powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%A%\agent.ps1"
+        rem VMs installed before setup added it: the VioGpu Resolution Service (needs admin, so Windows asks once)
+        rem makes the display follow Macaroon's window size; 200% scaling keeps the Retina-sized desktop readable
+        sc query vgpusrv >nul 2>&1 || if exist "%~dp0vgpusrv.exe" (
+          mkdir C:\ProgramData\Macaroon 2>nul
+          copy /y "%~dp0vgpusrv.exe" C:\ProgramData\Macaroon\vgpusrv.exe
+          copy /y "%~dp0viogpuap.exe" C:\ProgramData\Macaroon\viogpuap.exe
+          if exist C:\ProgramData\Macaroon\vgpusrv.exe (
+            powershell -NoProfile -Command "Start-Process -Verb RunAs -Wait C:\ProgramData\Macaroon\vgpusrv.exe -ArgumentList '-i'"
+            reg add "HKCU\Control Panel\Desktop" /v LogPixels /t REG_DWORD /d 192 /f
+            reg add "HKCU\Control Panel\Desktop" /v Win8DpiScaling /t REG_DWORD /d 1 /f
+          )
+        )
         echo Macaroon guest agent installed and started.
         timeout /t 3 >nul
 

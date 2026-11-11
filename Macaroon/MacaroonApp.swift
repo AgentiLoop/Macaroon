@@ -573,6 +573,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
                     // Lets VMs installed before the guest agent existed install (or update) it from the shared folder
                     try? WindowsSetup.crlf(WindowsSetup.agentScript).write(to: sharedURL.appendingPathComponent("agent.ps1"), atomically: true, encoding: .utf8)
                     try? WindowsSetup.crlf(WindowsSetup.agentInstaller).write(to: sharedURL.appendingPathComponent("Install Macaroon Agent.cmd"), atomically: true, encoding: .utf8)
+                    try? WindowsSetup.copyResolutionService(from: base.appendingPathComponent("virtio-win.iso"), to: sharedURL)
                     clipboardTask = Task { await GuestAgent.syncClipboard(vm) }
                 }
             }
