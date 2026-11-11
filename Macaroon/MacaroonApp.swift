@@ -614,6 +614,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
                     try? WindowsSetup.crlf(WindowsSetup.agentInstaller).write(to: sharedURL.appendingPathComponent("Install Macaroon Agent.cmd"), atomically: true, encoding: .utf8)
                     try? WindowsSetup.copyResolutionService(from: base.appendingPathComponent("virtio-win.iso"), to: sharedURL)
                     clipboardTask = Task { await GuestAgent.syncClipboard(vm) }
+                    Task { await GuestAgent.keepScreenOn(vm) }
                 }
             }
         } catch {
