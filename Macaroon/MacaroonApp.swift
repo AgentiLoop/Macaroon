@@ -848,7 +848,20 @@ struct VMView: NSViewRepresentable {
             let work = DispatchWorkItem { [weak self] in
                 guard let self else { return }
                 if !self.retina, let display = self.display, let size = self.view?.bounds.size, size.width > 0, size.height > 0 {
-                    try? display.reconfigure(sizeInPixels: CGSize(width: size.width.rounded(), height: size.height.rounded()))
+                    // Multiples of 8: viogpudo scrambles the picture (wrong row stride) for other widths
+                    let width = max(640, Int(size.width) / 8 * 8), height = max(480, Int(size.height) / 8 * 8)
+                    let previous = display.sizeInPixels
+                    try? display.reconfigure(sizeInPixels: CGSize(width: width, height: height))
+                    // Windows: viogpudo now offers that size, but nothing in the guest switches to it, so the agent does.
+                    // If it can't (no agent, or one too old to know "resize"), Windows keeps drawing at its old size,
+                    // which the host would read with the new size's stride: scrambled. So go back to the old size.
+                    if let machine = self.view?.virtualMachine, !machine.socketDevices.isEmpty {
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .seconds(0.5))
+                            let reply = (try? await GuestAgent.request(machine, "resize \(width) \(height)")) ?? ""
+                            if reply != "ok" { try? display.reconfigure(sizeInPixels: previous) }
+                        }
+                    }
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.fit() }
             }

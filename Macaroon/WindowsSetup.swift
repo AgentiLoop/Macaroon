@@ -441,7 +441,8 @@ enum WindowsSetup {
 
     /// Guest agent, run at logon in the user's session (so it can reach the clipboard). One request per
     /// connection, one line: "exec <command>" streams cmd.exe's output back; "clip-get" returns the clipboard
-    /// text; "clip-set <base64 UTF-8>" sets it. Its log is %TEMP%\macaroon-agent.log.
+    /// text; "clip-set <base64 UTF-8>" sets it; "resize <width> <height>" sets the desktop size.
+    /// Its log is %TEMP%\macaroon-agent.log.
     static let agentScript = #"""
         Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @'
         using System;
@@ -528,6 +529,10 @@ enum WindowsSetup {
                     while (s.Receive(one) == 1 && one[0] != 10) line.WriteByte(one[0]);
                     string request = Encoding.UTF8.GetString(line.ToArray()).TrimEnd('\r');
                     if (request.StartsWith("exec ")) Exec(s, request.Substring(5));
+                    else if (request.StartsWith("resize ")) {
+                        string[] size = request.Substring(7).Split(' ');
+                        Send(s, Resize(int.Parse(size[0]), int.Parse(size[1])));
+                    }
                     else if (request == "clip-get") Send(s, OnSTA(() => Clipboard.ContainsText() ? Clipboard.GetText() : ""));
                     else if (request.StartsWith("clip-set ")) {
                         string text = Encoding.UTF8.GetString(Convert.FromBase64String(request.Substring(9)));
@@ -558,6 +563,27 @@ enum WindowsSetup {
                     process.WaitForExit();
                     if (process.ExitCode != 0) lock (lockObject) Send(s, "[exit code " + process.ExitCode + "]\n");
                 }
+            }
+
+            [DllImport("user32.dll")] static extern int GetDisplayConfigBufferSizes(uint flags, out uint paths, out uint modes);
+            [DllImport("user32.dll")] static extern int QueryDisplayConfig(uint flags, ref uint paths, [Out] int[] path, ref uint modes, [Out] int[] mode, IntPtr topology);
+            [DllImport("user32.dll")] static extern int SetDisplayConfig(uint paths, int[] path, uint modes, int[] mode, uint flags);
+
+            // Gives the desktop the size Macaroon just asked viogpudo for. virtio-win's own helper (vgpusrv starts
+            // viogpuap.exe for this) never finds the adapter: EnumDisplayDevices returns nothing on recent Windows.
+            static string Resize(int width, int height) {
+                uint paths, modes;
+                int r = GetDisplayConfigBufferSizes(2, out paths, out modes); // QDC_ONLY_ACTIVE_PATHS
+                if (r != 0) return "error " + r;
+                var path = new int[18 * paths]; // DISPLAYCONFIG_PATH_INFO is 72 bytes, DISPLAYCONFIG_MODE_INFO 64
+                var mode = new int[16 * modes];
+                r = QueryDisplayConfig(2, ref paths, path, ref modes, mode, IntPtr.Zero);
+                if (r != 0) return "error " + r;
+                // A source mode (infoType 1) has its width and height right after infoType, id and adapterId
+                for (int i = 0; i < modes; i++) if (mode[16 * i] == 1) { mode[16 * i + 4] = width; mode[16 * i + 5] = height; }
+                // SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES | SDC_SAVE_TO_DATABASE
+                r = SetDisplayConfig(paths, path, modes, mode, 0x80 | 0x20 | 0x400 | 0x200);
+                return r == 0 ? "ok" : "error " + r;
             }
 
             static string OnSTA(Func<string> body) {
