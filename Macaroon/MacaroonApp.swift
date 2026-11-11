@@ -613,7 +613,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         do {
             return try await GuestAgent.exec(machine, command)
         } catch {
-            return "The guest agent didn't answer (\(error.localizedDescription)). It starts when Windows logs on. If this VM was installed before the agent existed, run \"Install Macaroon Agent.cmd\" from the shared folder drive in Windows once."
+            return "The guest agent didn't answer (\(error.localizedDescription)). It starts when Windows logs on. If this VM was installed before the agent existed, press Win+R in Windows and run cmd /c \"Z:\\Install Macaroon Agent.cmd\" once (Z: is the shared folder drive; double-clicking it there fails with \"The directory name is invalid\")."
         }
     }
 
