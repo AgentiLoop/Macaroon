@@ -345,6 +345,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     // MARK: ISO catalogs (Ubuntu from cdimage.ubuntu.com, Windows 11 ARM from Microsoft)
 
     static let ubuntuReleases = URL(string: "https://cdimage.ubuntu.com/ubuntu/releases/")!
+    static let archbootISOs = URL(string: "https://release.archboot.com/aarch64/latest/iso/")!
     static let windowsPage = URL(string: "https://www.microsoft.com/en-us/software-download/windows11arm64")!
     static let msProfile = "606624d44113"
     private let msSession = UUID().uuidString.lowercased()
@@ -363,7 +364,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             isoCache[wanted] = found
             guard guest == wanted else { return }
             showISOs()
-            if !isInstalled { status = "Choose a \(wanted == .linux ? "Ubuntu" : "Windows 11 ARM") ISO, then Download & Install." }
+            if !isInstalled { status = "Choose a \(wanted == .linux ? "Ubuntu or Arch" : "Windows 11 ARM") ISO, then Download & Install." }
         } catch {
             guard guest == wanted else { return }
             status = "Could not load the \(wanted.title) ISO list: \(error.localizedDescription)"
@@ -400,7 +401,16 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
                 result.append(InstallerISO(title: "Ubuntu \(number) \(label) (arm64)", fileName: name, url: folder.appendingPathComponent(name)))
             }
         }
+        if let arch = try? await archISO() { result.append(arch) }
         return result
+    }
+
+    /// Arch Linux ARM through Archboot's aarch64 UEFI ISO (Arch has no official ARM ISO). Base for Omarchy.
+    private func archISO() async throws -> InstallerISO? {
+        let (index, _) = try await URLSession.shared.data(from: Self.archbootISOs)
+        let html = String(decoding: index, as: UTF8.self)
+        guard let name = html.matches(of: try Regex(#"archboot-[\w.-]+-ARCH-aarch64\.iso"#)).map({ String($0.output[0].substring ?? "") }).first else { return nil }
+        return InstallerISO(title: "Arch Linux ARM – Archboot (arm64)", fileName: name, url: Self.archbootISOs.appendingPathComponent(name))
     }
 
     private func msRequest(_ path: String) -> URLRequest {
