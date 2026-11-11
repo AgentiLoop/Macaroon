@@ -390,6 +390,11 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             throw NSError(domain: "Macaroon", code: 2, userInfo: [NSLocalizedDescriptionKey: "VM files are damaged. Delete the VM and reinstall."])
         }
         platform.machineIdentifier = id
+        // Windows spins one vCPU at 100% forever without a PMU. Private, undocumented switch (as used by tart's Windows branch).
+        let pmu = NSSelectorFromString("_setPerformanceMonitoringUnitEmulationEnabled:")
+        if guest == .windows, platform.responds(to: pmu) {
+            platform.setValue(true, forKey: "performanceMonitoringUnitEmulationEnabled")
+        }
         config.platform = platform
         let bootLoader = VZEFIBootLoader()
         bootLoader.variableStore = VZEFIVariableStore(url: nvramURL)
