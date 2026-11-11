@@ -497,10 +497,14 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
                     file = local
                 } else if let url = iso.url {
                     status = "Downloading \(iso.title)…"
-                    try FileManager.default.moveItem(at: try await download(url), to: file)
+                    let downloaded = try await download(url)
+                    try? FileManager.default.removeItem(at: file) // a copy may have appeared while downloading
+                    try FileManager.default.moveItem(at: downloaded, to: file)
                 } else if let sku = iso.sku, let url = await windowsDownloadURL(sku: sku) {
                     status = "Downloading \(iso.title)…"
-                    try FileManager.default.moveItem(at: try await download(url), to: file)
+                    let downloaded = try await download(url)
+                    try? FileManager.default.removeItem(at: file) // a copy may have appeared while downloading
+                    try FileManager.default.moveItem(at: downloaded, to: file)
                 } else {
                     // Microsoft blocked the direct link: download in the browser and pick it up from ~/Downloads.
                     NSWorkspace.shared.open(Self.windowsPage)
