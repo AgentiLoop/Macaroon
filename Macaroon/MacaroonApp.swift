@@ -275,8 +275,10 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             status = "Downloading WinFsp…"
             let winFsp = try await WindowsSetup.winFsp(cache: base)
             let media = mediaURL
+            // Optional test-signed viogpudo build (viogpudo.inf/.sys/.cat + VirtIOTestCert.cer) used instead of virtio-win's
+            let testDriver = base.appendingPathComponent("viogpudo-test")
             try await Task.detached {
-                try WindowsSetup.createMedia(at: media, iso: iso, virtioWin: virtioWin, winFsp: winFsp) { step in
+                try WindowsSetup.createMedia(at: media, iso: iso, virtioWin: virtioWin, winFsp: winFsp, testDriver: testDriver) { step in
                     Task { @MainActor in self.status = step }
                 }
             }.value
@@ -610,9 +612,17 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
 
     nonisolated func guestDidStop(_ virtualMachine: VZVirtualMachine) {
         MainActor.assumeIsolated {
+            // Not the machine Stop just shut down (stop() already cleared it)
+            let guestInitiated = virtualMachine === machine
             guestStopped()
-            // Virtualization.framework stops the VM when the guest reboots, so setup restarts it
-            if guest == .windows, setupPhase != nil { Task { await continueWindowsSetup() } }
+            // Virtualization.framework stops the VM when the guest reboots (it has no reset), so restart it.
+            // Windows can't tell a restart from a shutdown here; use Stop to power it off.
+            guard guest == .windows, guestInitiated else { return }
+            if setupPhase != nil { Task { await continueWindowsSetup() }; return }
+            Task {
+                await start()
+                if running { status = "Windows restarted. Use Stop to power it off." }
+            }
         }
     }
 

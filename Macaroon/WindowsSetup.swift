@@ -32,7 +32,7 @@ enum WindowsSetup {
 
     // MARK: Building the media
 
-    static func createMedia(at media: URL, iso: URL, virtioWin: URL, winFsp: URL, progress: @escaping (String) -> Void) throws {
+    static func createMedia(at media: URL, iso: URL, virtioWin: URL, winFsp: URL, testDriver: URL? = nil, progress: @escaping (String) -> Void) throws {
         guard let wimlib else { throw fail("Windows install needs wimlib to edit boot.wim. Run: brew install wimlib") }
         let fm = FileManager.default
 
@@ -69,6 +69,7 @@ enum WindowsSetup {
             let wimTarget = source.appendingPathComponent("sources")
             try fm.createDirectory(at: wimTarget, withIntermediateDirectories: true)
             try fm.copyItem(at: installWIM, to: wimTarget.appendingPathComponent(installWIM.lastPathComponent))
+
 
             progress("Preparing WinPE…")
             let scratch = fm.temporaryDirectory.appendingPathComponent("macaroon-pe-\(UUID().uuidString)")
@@ -116,6 +117,21 @@ enum WindowsSetup {
                 }
             }
             try fm.copyItem(at: virtio.appendingPathComponent("viofs/w11/ARM64/virtiofs.exe"), to: folder.appendingPathComponent("virtiofs.exe"))
+
+            // A test-signed viogpudo build replaces virtio-win's in the installed system (WinPE keeps the stock
+            // one, it has no test signing). install.cmd adds it with /ForceUnsigned and turns test signing on.
+            if let testDriver, fm.fileExists(atPath: testDriver.appendingPathComponent("viogpudo.inf").path),
+               fm.fileExists(atPath: testDriver.appendingPathComponent("VirtIOTestCert.cer").path) {
+                progress("Adding the test viogpudo build…")
+                let gpu = driverFolder.appendingPathComponent("viogpudo"), pe = folder.appendingPathComponent("pe")
+                try fm.createDirectory(at: pe, withIntermediateDirectories: true)
+                try fm.moveItem(at: gpu, to: pe.appendingPathComponent("viogpudo"))
+                try fm.createDirectory(at: gpu, withIntermediateDirectories: true)
+                for file in try fm.contentsOfDirectory(atPath: testDriver.path) where !file.hasPrefix(".") && !file.lowercased().hasSuffix(".pdb") {
+                    let target = file == "VirtIOTestCert.cer" ? folder.appendingPathComponent(file) : gpu.appendingPathComponent(file)
+                    try fm.copyItem(at: testDriver.appendingPathComponent(file), to: target)
+                }
+            }
 
             // macOS writes "._" AppleDouble files on FAT/exFAT, which DISM reads as broken .inf files
             for volume in [boot, source] { _ = try? run("/usr/sbin/dot_clean", ["-m", volume.path]) }
@@ -307,7 +323,7 @@ enum WindowsSetup {
         )
         goto off
         :found
-        drvload %M%\macaroon\drivers\viogpudo\viogpudo.inf
+        if exist %M%\macaroon\pe\viogpudo\viogpudo.inf (drvload %M%\macaroon\pe\viogpudo\viogpudo.inf) else drvload %M%\macaroon\drivers\viogpudo\viogpudo.inf
         call %M%\macaroon\install.cmd %M%
         :off
         wpeutil shutdown
@@ -356,7 +372,10 @@ enum WindowsSetup {
         dism /Apply-Image /ImageFile:%WIM% %IMAGE% /ApplyDir:W:\ >> %LOG% 2>&1 || goto fail
 
         echo [%time%] adding drivers >> %LOG%
-        dism /Image:W:\ /Add-Driver /Driver:%T%\drivers /Recurse >> %LOG% 2>&1 || goto fail
+        rem A test-signed viogpudo (VirtIOTestCert.cer next to it) needs /ForceUnsigned here and test signing at boot
+        set FORCE=
+        if exist %T%\VirtIOTestCert.cer set FORCE=/ForceUnsigned
+        dism /Image:W:\ /Add-Driver /Driver:%T%\drivers /Recurse %FORCE% >> %LOG% 2>&1 || goto fail
 
         mkdir W:\Windows\Panther W:\Windows\Setup\Scripts W:\ProgramData\Macaroon 2>nul
         copy /y %T%\unattend.xml W:\Windows\Panther\unattend.xml >> %LOG% || goto fail
@@ -369,6 +388,10 @@ enum WindowsSetup {
 
         echo [%time%] boot files >> %LOG%
         bcdboot W:\Windows /s S: /f UEFI >> %LOG% 2>&1 || goto fail
+        if defined FORCE (
+          bcdedit /store S:\EFI\Microsoft\Boot\BCD /set {default} testsigning on >> %LOG% 2>&1 || goto fail
+          copy /y %T%\VirtIOTestCert.cer W:\ProgramData\Macaroon\VirtIOTestCert.cer >> %LOG% || goto fail
+        )
         rem Same chain as the media: loader -> framebuffer driver -> Windows Boot Manager
         mkdir S:\EFI\Macaroon S:\EFI\BOOT 2>nul
         copy /y %T%\framebuffer.efi S:\EFI\Macaroon\framebuffer.efi >> %LOG% || goto fail
@@ -390,6 +413,11 @@ enum WindowsSetup {
     static let setupComplete = #"""
         @echo off
         powercfg /hibernate off
+        rem Test-signed viogpudo build: trust its certificate (test signing is already on from install.cmd)
+        if exist C:\ProgramData\Macaroon\VirtIOTestCert.cer (
+          certutil -f -addstore Root C:\ProgramData\Macaroon\VirtIOTestCert.cer
+          certutil -f -addstore TrustedPublisher C:\ProgramData\Macaroon\VirtIOTestCert.cer
+        )
         start /wait "" msiexec /i C:\ProgramData\Macaroon\winfsp.msi /qn /norestart
         sc create VirtioFsSvc binpath= C:\ProgramData\Macaroon\virtiofs.exe start= auto depend= WinFsp.Launcher/VirtioFsDrv DisplayName= "Virtio FS Service"
         rem VioGpu Resolution Service: makes viogpudo follow the size Macaroon's window asks for (in points)
