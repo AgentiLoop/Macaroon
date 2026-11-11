@@ -838,8 +838,9 @@ struct VMView: NSViewRepresentable {
     /// macOS guests get the window's full Retina pixel size. Windows/Linux get its size in points: asking them for
     /// Retina pixels only works with 200% scaling in the guest, which doubles everything when the driver doesn't follow.
     var retina = true
-    /// False for Windows, which keeps its boot mode (see Coordinator.settle).
     var resizesGuest = true
+    /// Windows: after resizing the display, ask the guest agent to switch the desktop to the new mode
+    var windowsAgent = false
 
     func makeNSView(context: Context) -> VZVirtualMachineView {
         let view = VZVirtualMachineView()
@@ -848,6 +849,7 @@ struct VMView: NSViewRepresentable {
         context.coordinator.view = view
         context.coordinator.retina = retina
         context.coordinator.resizesGuest = resizesGuest
+        context.coordinator.windowsAgent = windowsAgent
         Coordinator.current = view
         return view
     }
@@ -870,6 +872,7 @@ struct VMView: NSViewRepresentable {
         static weak var current: VZVirtualMachineView?
         var retina = true
         var resizesGuest = true
+        var windowsAgent = false
         private var display: VZGraphicsDisplay?
         private var resizeObservers: [NSObjectProtocol] = []
         private var pending: DispatchWorkItem?
@@ -892,10 +895,8 @@ struct VMView: NSViewRepresentable {
         }
 
         /// Ask the guest for the view's size (points, when not Retina), then give it a moment to apply it before fitting.
-        /// Windows (resizesGuest false) keeps its 1920x1200 boot mode and is only scaled by the host:
-        /// virtio-win's viogpudo can't change modes under Virtualization.framework (it unrefs the resource still on the
-        /// scanout, so the new one is never created) and the host then reads the old picture at the new size's stride,
-        /// which is the scrambled screen. The window still follows the guest's aspect ratio through fit().
+        /// Windows needs the PR #1717 viogpudo (stock virtio-win unrefs the resource still on the scanout, so mode
+        /// changes scramble or blank the picture) plus the guest agent to switch the desktop to the new mode.
         private func settle() {
             pending?.cancel()
             let work = DispatchWorkItem { [weak self] in
@@ -904,6 +905,13 @@ struct VMView: NSViewRepresentable {
                     // Multiples of 8: viogpudo scrambles the picture (wrong row stride) for other widths
                     let width = max(640, Int(size.width) / 8 * 8), height = max(480, Int(size.height) / 8 * 8)
                     try? display.reconfigure(sizeInPixels: CGSize(width: width, height: height))
+                    // Windows: viogpudo now offers that size as a mode; the guest agent switches the desktop to it
+                    if self.windowsAgent, let machine = self.view?.virtualMachine {
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .seconds(1))
+                            _ = try? await GuestAgent.request(machine, "resize \(width) \(height)")
+                        }
+                    }
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.fit() }
             }
@@ -1008,7 +1016,7 @@ struct ContentView: View {
 
             ZStack {
                 if let machine = vm.machine, vm.running {
-                    VMView(machine: machine, retina: vm.guest == .macOS, resizesGuest: vm.guest != .windows)
+                    VMView(machine: machine, retina: vm.guest == .macOS, windowsAgent: vm.guest == .windows)
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "desktopcomputer").font(.system(size: 64))
