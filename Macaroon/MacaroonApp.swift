@@ -790,14 +790,16 @@ enum GuestKeyboard {
 
 struct VMView: NSViewRepresentable {
     let machine: VZVirtualMachine
+    /// macOS guests get the window's full Retina pixel size. Windows/Linux get its size in points: asking them for
+    /// Retina pixels only works with 200% scaling in the guest, which doubles everything when the driver doesn't follow.
+    var retina = true
 
-    /// Like tart: the view asks the guest for the window's full Retina pixel size. Windows follows it once
-    /// virtio-win's VioGpu Resolution Service (vgpusrv) is running; without it viogpudo ignores the request.
     func makeNSView(context: Context) -> VZVirtualMachineView {
         let view = VZVirtualMachineView()
         view.capturesSystemKeys = true
-        view.automaticallyReconfiguresDisplay = true
+        view.automaticallyReconfiguresDisplay = retina
         context.coordinator.view = view
+        context.coordinator.retina = retina
         Coordinator.current = view
         return view
     }
@@ -818,6 +820,7 @@ struct VMView: NSViewRepresentable {
     final class Coordinator: NSObject, VZGraphicsDisplayObserver {
         weak var view: VZVirtualMachineView?
         static weak var current: VZVirtualMachineView?
+        var retina = true
         private var display: VZGraphicsDisplay?
         private var resizeObservers: [NSObjectProtocol] = []
         private var pending: DispatchWorkItem?
@@ -836,14 +839,21 @@ struct VMView: NSViewRepresentable {
                     self.settle()
                 })
             }
+            DispatchQueue.main.async { self.settle() }
         }
 
-        /// Give the guest a moment to apply the size the view just requested, then fit the window to it.
+        /// Ask the guest for the view's size (points, when not Retina), then give it a moment to apply it before fitting.
         private func settle() {
             pending?.cancel()
-            let work = DispatchWorkItem { [weak self] in self?.fit() }
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                if !self.retina, let display = self.display, let size = self.view?.bounds.size, size.width > 0, size.height > 0 {
+                    try? display.reconfigure(sizeInPixels: CGSize(width: size.width.rounded(), height: size.height.rounded()))
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.fit() }
+            }
             pending = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
         }
 
         func displayDidReconfigure(_ display: VZGraphicsDisplay) {
@@ -938,7 +948,7 @@ struct ContentView: View {
 
             ZStack {
                 if let machine = vm.machine, vm.running {
-                    VMView(machine: machine)
+                    VMView(machine: machine, retina: vm.guest == .macOS)
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "desktopcomputer").font(.system(size: 64))

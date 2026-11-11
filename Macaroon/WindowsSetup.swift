@@ -392,13 +392,8 @@ enum WindowsSetup {
         powercfg /hibernate off
         start /wait "" msiexec /i C:\ProgramData\Macaroon\winfsp.msi /qn /norestart
         sc create VirtioFsSvc binpath= C:\ProgramData\Macaroon\virtiofs.exe start= auto depend= WinFsp.Launcher/VirtioFsDrv DisplayName= "Virtio FS Service"
-        rem VioGpu Resolution Service: makes viogpudo follow the size Macaroon's window asks for (Retina pixels)
+        rem VioGpu Resolution Service: makes viogpudo follow the size Macaroon's window asks for (in points)
         C:\ProgramData\Macaroon\vgpusrv.exe -i
-        rem 200% scaling for the new user, so the Retina-sized desktop is readable
-        reg load HKU\MacaroonDefault C:\Users\Default\NTUSER.DAT
-        reg add "HKU\MacaroonDefault\Control Panel\Desktop" /v LogPixels /t REG_DWORD /d 192 /f
-        reg add "HKU\MacaroonDefault\Control Panel\Desktop" /v Win8DpiScaling /t REG_DWORD /d 1 /f
-        reg unload HKU\MacaroonDefault
         reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run /v MacaroonAgent /t REG_SZ /d "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\ProgramData\Macaroon\agent.ps1" /f
         set WL="HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
         reg add %WL% /v AutoAdminLogon /t REG_SZ /d 1 /f
@@ -424,17 +419,18 @@ enum WindowsSetup {
         reg add HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v MacaroonAgent /t REG_SZ /d "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"%A%\agent.ps1\"" /f
         start "" powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%A%\agent.ps1"
         rem VMs installed before setup added it: the VioGpu Resolution Service (needs admin, so Windows asks once)
-        rem makes the display follow Macaroon's window size; 200% scaling keeps the Retina-sized desktop readable
+        rem makes the display follow Macaroon's window size
         sc query vgpusrv >nul 2>&1 || if exist "%~dp0vgpusrv.exe" (
           mkdir C:\ProgramData\Macaroon 2>nul
           copy /y "%~dp0vgpusrv.exe" C:\ProgramData\Macaroon\vgpusrv.exe
           copy /y "%~dp0viogpuap.exe" C:\ProgramData\Macaroon\viogpuap.exe
           if exist C:\ProgramData\Macaroon\vgpusrv.exe (
             powershell -NoProfile -Command "Start-Process -Verb RunAs -Wait C:\ProgramData\Macaroon\vgpusrv.exe -ArgumentList '-i'"
-            reg add "HKCU\Control Panel\Desktop" /v LogPixels /t REG_DWORD /d 192 /f
-            reg add "HKCU\Control Panel\Desktop" /v Win8DpiScaling /t REG_DWORD /d 1 /f
           )
         )
+        rem Undo the forced 200% scaling an earlier installer set (it doubled everything); takes effect at next sign-in
+        reg delete "HKCU\Control Panel\Desktop" /v LogPixels /f >nul 2>&1
+        reg delete "HKCU\Control Panel\Desktop" /v Win8DpiScaling /f >nul 2>&1
         echo Macaroon guest agent installed and started.
         timeout /t 3 >nul
 
