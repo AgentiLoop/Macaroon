@@ -405,6 +405,7 @@ enum WindowsSetup {
     /// once in Windows installs the agent for the current user (no admin needed) and starts it.
     static let agentInstaller = #"""
         @echo off
+        cd /d "%TEMP%"
         set A=%LOCALAPPDATA%\Macaroon
         mkdir "%A%" 2>nul
         copy /y "%~dp0agent.ps1" "%A%\agent.ps1" || (pause & exit /b 1)
