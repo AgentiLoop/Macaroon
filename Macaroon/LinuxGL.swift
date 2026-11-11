@@ -7,8 +7,14 @@ import Virtualization
 @MainActor
 final class LinuxGL: NSObject, VZVirtioSocketListenerDelegate {
     static let port: UInt32 = 30311
-    static let serverURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Macaroon/VirGL/virgl_test_server")
+    static let folder = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Macaroon/VirGL")
+    /// A local Tools/VirGL/build.sh build if there is one, otherwise the one shipped in the app (Payload/VirGL).
+    static var serverURL: URL {
+        let local = folder.appendingPathComponent("virgl_test_server")
+        if FileManager.default.isExecutableFile(atPath: local.path) { return local }
+        return Bundle.main.resourceURL?.appendingPathComponent("Payload/VirGL/virgl_test_server") ?? local
+    }
 
     private let server = Process()
     private let socketPath = NSTemporaryDirectory() + "macaroon-virgl-\(getpid()).sock"
@@ -17,15 +23,17 @@ final class LinuxGL: NSObject, VZVirtioSocketListenerDelegate {
 
     /// Starts the renderer and listens for the guest. Nil when the server isn't built or the VM has no vsock.
     init?(machine: VZVirtualMachine) {
-        guard FileManager.default.isExecutableFile(atPath: Self.serverURL.path),
+        let serverURL = Self.serverURL
+        guard FileManager.default.isExecutableFile(atPath: serverURL.path),
               let device = machine.socketDevices.first as? VZVirtioSocketDevice else { return nil }
         super.init()
         unlink(socketPath)
-        server.executableURL = Self.serverURL
+        server.executableURL = serverURL
         // No fork per client: Metal (under Apple's OpenGL) can't build pipelines in a forked child, so every draw came out
         // black. Clients are then served one at a time (--multi-clients needs vtest protocol 3, which virpipe over vsock lacks).
         server.arguments = ["--no-fork", "--socket-path", socketPath]
-        let log = Self.serverURL.deletingLastPathComponent().appendingPathComponent("server.log")
+        try? FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
+        let log = Self.folder.appendingPathComponent("server.log")
         FileManager.default.createFile(atPath: log.path, contents: nil)
         server.standardOutput = try? FileHandle(forWritingTo: log)
         server.standardError = server.standardOutput

@@ -282,8 +282,13 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             status = "Downloading WinFsp…"
             let winFsp = try await WindowsSetup.winFsp(cache: base)
             let media = mediaURL
-            // Optional test-signed viogpudo build (viogpudo.inf/.sys/.cat + VirtIOTestCert.cer) used instead of virtio-win's
-            let testDriver = base.appendingPathComponent("viogpudo-test")
+            // Test-signed viogpudo build (viogpudo.inf/.sys/.cat + VirtIOTestCert.cer) used instead of virtio-win's: a local
+            // rebuild in Application Support if there is one, otherwise the one shipped in the app (Payload/viogpudo-test)
+            var testDriver = base.appendingPathComponent("viogpudo-test")
+            if !FileManager.default.fileExists(atPath: testDriver.appendingPathComponent("viogpudo.inf").path),
+               let bundled = Bundle.main.resourceURL?.appendingPathComponent("Payload/viogpudo-test") {
+                testDriver = bundled
+            }
             try await Task.detached {
                 try WindowsSetup.createMedia(at: media, iso: iso, virtioWin: virtioWin, winFsp: winFsp, testDriver: testDriver) { step in
                     Task { @MainActor in self.status = step }
