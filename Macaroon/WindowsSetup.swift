@@ -413,6 +413,12 @@ enum WindowsSetup {
     static let setupComplete = #"""
         @echo off
         powercfg /hibernate off
+        rem Never blank the screen: no display timeout, no sleep, no screen saver
+        powercfg /change monitor-timeout-ac 0
+        powercfg /change monitor-timeout-dc 0
+        powercfg /change standby-timeout-ac 0
+        powercfg /change standby-timeout-dc 0
+        reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Control Panel\Desktop" /v ScreenSaveActive /t REG_SZ /d 0 /f
         rem Test-signed viogpudo build: trust its certificate (test signing is already on from install.cmd)
         if exist C:\ProgramData\Macaroon\VirtIOTestCert.cer (
           certutil -f -addstore Root C:\ProgramData\Macaroon\VirtIOTestCert.cer
