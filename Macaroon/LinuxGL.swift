@@ -95,6 +95,8 @@ final class LinuxGL: NSObject, VZVirtioSocketListenerDelegate {
     # Macaroon: OpenGL on the Mac's GPU for Ubuntu. Run once:  sudo sh "/mnt/Set Up 3D.sh"
     # (after: sudo mount -t virtiofs com.apple.virtio-fs.automount /mnt)
     set -e
+    add-apt-repository -y universe 2>/dev/null || true # mesa-utils (glxinfo, glxgears) lives in universe
+    apt-get update
     apt-get install -y socat mesa-utils
     cat > /etc/systemd/system/macaroon-gl.service <<EOF
     [Unit]
