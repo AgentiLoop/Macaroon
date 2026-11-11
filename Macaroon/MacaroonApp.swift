@@ -493,6 +493,17 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         config.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
         try addCommonDevices(to: config)
         if guest == .windows { config.socketDevices = [VZVirtioSocketDeviceConfiguration()] } // guest agent
+        if guest == .linux {
+            // Clipboard sharing through the SPICE agent port; Ubuntu Desktop's spice-vdagent picks it up
+            let spice = VZSpiceAgentPortAttachment()
+            spice.sharesClipboard = true
+            let port = VZVirtioConsolePortConfiguration()
+            port.name = VZSpiceAgentPortAttachment.spiceAgentPortName
+            port.attachment = spice
+            let console = VZVirtioConsoleDeviceConfiguration()
+            console.ports[0] = port
+            config.consoleDevices = [console]
+        }
         try config.validate()
         return config
     }
