@@ -30,6 +30,14 @@ struct Snapshot: Identifiable, Hashable {
     var hasState: Bool { FileManager.default.fileExists(atPath: url.appendingPathComponent("State.vzvmsave").path) }
 }
 
+/// macOS guests use Apple's Mac platform; Linux and Windows ARM boot from an ISO through the generic EFI platform.
+enum GuestOS: String, CaseIterable, Identifiable {
+    case macOS, linux, windows
+    var id: String { rawValue }
+    var title: String { self == .macOS ? "macOS" : self == .linux ? "Linux" : "Windows ARM" }
+    var folder: String { self == .macOS ? "VM" : self == .linux ? "Linux" : "Windows" }
+}
+
 @MainActor
 final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, URLSessionDownloadDelegate {
     @Published var images: [RestoreImage] = []
@@ -39,19 +47,37 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     @Published var busy = false
     @Published var machine: VZVirtualMachine?
     @Published var running = false
+    @Published var guest = GuestOS(rawValue: UserDefaults.standard.string(forKey: "guest") ?? "") ?? .macOS {
+        didSet {
+            UserDefaults.standard.set(guest.rawValue, forKey: "guest")
+            loadSnapshots()
+            status = isInstalled ? "\(guest.title) VM installed. Press Start." : guest == .macOS
+                ? "Choose a macOS IPSW from Apple, then Download & Install."
+                : "Choose an ARM64 \(guest.title) installer ISO."
+        }
+    }
 
     static let catalogURL = URL(string: "https://mesu.apple.com/assets/macos/com_apple_macOSIPSW/com_apple_macOSIPSW.xml")!
-    let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Macaroon/VM")
+    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Macaroon")
+    var root: URL { base.appendingPathComponent(guest.folder) }
     var diskURL: URL { root.appendingPathComponent("Disk.img") }
     var auxURL: URL { root.appendingPathComponent("AuxiliaryStorage") }
     var modelURL: URL { root.appendingPathComponent("HardwareModel") }
     var machineIDURL: URL { root.appendingPathComponent("MachineIdentifier") }
     var macURL: URL { root.appendingPathComponent("MACAddress") }
     var ipswURL: URL { root.appendingPathComponent("Restore.ipsw") }
-    var sharedURL: URL { root.appendingPathComponent("Shared") }
+    var nvramURL: URL { root.appendingPathComponent("NVRAM") }
+    var isoPathURL: URL { root.appendingPathComponent("ISOPath") }
+    var sharedURL: URL { base.appendingPathComponent("VM/Shared") }
     var snapshotsURL: URL { root.appendingPathComponent("Snapshots") }
     @Published var snapshots: [Snapshot] = []
     var isInstalled: Bool { FileManager.default.fileExists(atPath: machineIDURL.path) }
+
+    /// The installer ISO attached as a USB drive, if any.
+    var installerISO: URL? {
+        guard let path = try? String(contentsOf: isoPathURL, encoding: .utf8), FileManager.default.fileExists(atPath: path) else { return nil }
+        return URL(fileURLWithPath: path)
+    }
 
     private var downloadContinuation: CheckedContinuation<URL, Error>?
     private var installObservation: NSKeyValueObservation?
@@ -61,6 +87,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         try? FileManager.default.createDirectory(at: sharedURL, withIntermediateDirectories: true)
         loadSnapshots()
     }
+
 
     // MARK: Apple IPSW catalog
 
@@ -72,7 +99,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             Self.collectVirtualMacImages(plist, insideVirtualMac: false, into: &found)
             images = found.values.sorted { $0.version.compare($1.version, options: .numeric) == .orderedDescending }
             selected = images.first
-            status = isInstalled ? "VM installed. Press Start." : "Choose a macOS IPSW from Apple, then Download & Install."
+            if guest == .macOS { status = isInstalled ? "VM installed. Press Start." : "Choose a macOS IPSW from Apple, then Download & Install." }
         } catch {
             status = "Could not load Apple's IPSW list: \(error.localizedDescription)"
         }
@@ -183,6 +210,70 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         status = "macOS installed. Press Start."
     }
 
+    // MARK: Linux / Windows ARM (EFI boot from an ISO)
+
+    /// Creates an EFI VM (NVRAM, machine ID, 64 GB disk) for the selected guest and boots it from the ISO.
+    func installFromISO(_ iso: URL) async {
+        do {
+            if !isInstalled {
+                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+                _ = try VZEFIVariableStore(creatingVariableStoreAt: nvramURL, options: [.allowOverwrite])
+                if !FileManager.default.fileExists(atPath: diskURL.path) {
+                    FileManager.default.createFile(atPath: diskURL.path, contents: nil)
+                    let handle = try FileHandle(forWritingTo: diskURL)
+                    try handle.truncate(atOffset: 64 * 1024 * 1024 * 1024) // 64 GB sparse disk
+                    try handle.close()
+                }
+                try VZGenericMachineIdentifier().dataRepresentation.write(to: machineIDURL)
+            }
+            try iso.path.write(to: isoPathURL, atomically: true, encoding: .utf8)
+            objectWillChange.send()
+        } catch {
+            status = "Failed: \(error.localizedDescription)"
+            return
+        }
+        await start()
+    }
+
+    func ejectISO() {
+        try? FileManager.default.removeItem(at: isoPathURL)
+        objectWillChange.send()
+        status = "Installer ISO ejected. The VM boots from its disk next Start."
+    }
+
+    private func makeEFIConfiguration() throws -> VZVirtualMachineConfiguration {
+        let config = VZVirtualMachineConfiguration()
+        let platform = VZGenericPlatformConfiguration()
+        guard let id = VZGenericMachineIdentifier(dataRepresentation: try Data(contentsOf: machineIDURL)) else {
+            throw NSError(domain: "Macaroon", code: 2, userInfo: [NSLocalizedDescriptionKey: "VM files are damaged. Delete the VM and reinstall."])
+        }
+        platform.machineIdentifier = id
+        config.platform = platform
+        let bootLoader = VZEFIBootLoader()
+        bootLoader.variableStore = VZEFIVariableStore(url: nvramURL)
+        config.bootLoader = bootLoader
+        config.cpuCount = min(4, ProcessInfo.processInfo.processorCount)
+        config.memorySize = 4 * 1024 * 1024 * 1024
+
+        let graphics = VZVirtioGraphicsDeviceConfiguration()
+        graphics.scanouts = [VZVirtioGraphicsScanoutConfiguration(widthInPixels: 1920, heightInPixels: 1200)]
+        config.graphicsDevices = [graphics]
+
+        // NVMe rather than virtio-blk: Windows ARM has an inbox NVMe driver but none for virtio. Linux handles both.
+        var storage: [VZStorageDeviceConfiguration] = [
+            VZNVMExpressControllerDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: diskURL, readOnly: false))
+        ]
+        if let iso = installerISO {
+            storage.append(VZUSBMassStorageDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: iso, readOnly: true)))
+        }
+        config.storageDevices = storage
+        config.keyboards = [VZUSBKeyboardConfiguration()]
+        config.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
+        try addCommonDevices(to: config)
+        try config.validate()
+        return config
+    }
+
     // MARK: Run
 
     private func makeConfiguration(platform: VZMacPlatformConfiguration, cpus: Int, memory: UInt64) throws -> VZVirtualMachineConfiguration {
@@ -197,6 +288,15 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         config.graphicsDevices = [graphics]
 
         config.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: diskURL, readOnly: false))]
+        config.keyboards = [VZMacKeyboardConfiguration()]
+        config.pointingDevices = [VZMacTrackpadConfiguration(), VZUSBScreenCoordinatePointingDeviceConfiguration()]
+        try addCommonDevices(to: config)
+        try config.validate()
+        return config
+    }
+
+    /// Network, entropy and the shared folder — the same for every guest.
+    private func addCommonDevices(to config: VZVirtualMachineConfiguration) throws {
         let network = VZVirtioNetworkDeviceConfiguration()
         network.attachment = VZNATNetworkDeviceAttachment()
         // A new random MAC on every launch makes saved running state un-restorable ("invalid argument"), so keep one.
@@ -206,29 +306,31 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             try network.macAddress.string.write(to: macURL, atomically: true, encoding: .utf8)
         }
         config.networkDevices = [network]
-        config.keyboards = [VZMacKeyboardConfiguration()]
-        config.pointingDevices = [VZMacTrackpadConfiguration(), VZUSBScreenCoordinatePointingDeviceConfiguration()]
         config.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
 
-        // Apps dropped on the window land here; macOS guests auto-mount it at /Volumes/My Shared Files.
+        // Apps dropped on the window land here; macOS guests auto-mount it at /Volumes/My Shared Files,
+        // Linux guests can mount it with: mount -t virtiofs com.apple.virtio-fs.automount /mnt
         let share = VZVirtioFileSystemDeviceConfiguration(tag: VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag)
         share.share = VZSingleDirectoryShare(directory: VZSharedDirectory(url: sharedURL, readOnly: false))
         config.directorySharingDevices = [share]
-
-        try config.validate()
-        return config
     }
 
     private func makeMachine() throws -> VZVirtualMachine {
-        let platform = VZMacPlatformConfiguration()
-        guard let model = VZMacHardwareModel(dataRepresentation: try Data(contentsOf: modelURL)),
-              let id = VZMacMachineIdentifier(dataRepresentation: try Data(contentsOf: machineIDURL)) else {
-            throw NSError(domain: "Macaroon", code: 2, userInfo: [NSLocalizedDescriptionKey: "VM files are damaged. Delete the VM and reinstall."])
+        let config: VZVirtualMachineConfiguration
+        if guest == .macOS {
+            let platform = VZMacPlatformConfiguration()
+            guard let model = VZMacHardwareModel(dataRepresentation: try Data(contentsOf: modelURL)),
+                  let id = VZMacMachineIdentifier(dataRepresentation: try Data(contentsOf: machineIDURL)) else {
+                throw NSError(domain: "Macaroon", code: 2, userInfo: [NSLocalizedDescriptionKey: "VM files are damaged. Delete the VM and reinstall."])
+            }
+            platform.hardwareModel = model
+            platform.machineIdentifier = id
+            platform.auxiliaryStorage = VZMacAuxiliaryStorage(url: auxURL)
+            config = try makeConfiguration(platform: platform, cpus: 4, memory: 4 * 1024 * 1024 * 1024)
+        } else {
+            config = try makeEFIConfiguration()
         }
-        platform.hardwareModel = model
-        platform.machineIdentifier = id
-        platform.auxiliaryStorage = VZMacAuxiliaryStorage(url: auxURL)
-        let vm = VZVirtualMachine(configuration: try makeConfiguration(platform: platform, cpus: 4, memory: 4 * 1024 * 1024 * 1024))
+        let vm = VZVirtualMachine(configuration: config)
         vm.delegate = self
         return vm
     }
@@ -239,12 +341,17 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             machine = vm
             try await vm.start()
             running = true
-            status = "Running. Drag an app onto the window; in the VM open /Volumes/My Shared Files."
+            switch guest {
+            case .macOS: status = "Running. Drag an app onto the window; in the VM open /Volumes/My Shared Files."
+            case .linux: status = installerISO != nil ? "Booting the installer ISO. After installing, Stop and Eject ISO." : "Running. Shared folder: mount -t virtiofs com.apple.virtio-fs.automount /mnt"
+            case .windows: status = installerISO != nil ? "Booting the installer ISO. After installing, Stop and Eject ISO." : "Running."
+            }
         } catch {
             machine = nil
             status = "Start failed: \(error.localizedDescription)"
         }
     }
+
 
 
     func stop() async {
@@ -272,7 +379,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
 
     // MARK: Snapshots (APFS clones of the disk + aux storage, plus saved running state)
 
-    private let vmFiles = ["Disk.img", "AuxiliaryStorage"]
+    private var vmFiles: [String] { ["Disk.img", guest == .macOS ? "AuxiliaryStorage" : "NVRAM"] }
     private let stateFile = "State.vzvmsave"
 
     func loadSnapshots() {
@@ -404,13 +511,28 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Picker("IPSW", selection: $vm.selected) {
-                    ForEach(vm.images) { Text($0.title).tag(Optional($0)) }
+                Picker("Guest", selection: $vm.guest) {
+                    ForEach(GuestOS.allCases) { Text($0.title).tag($0) }
                 }
-                .frame(maxWidth: 320)
+                .pickerStyle(.segmented)
+                .fixedSize()
                 .disabled(vm.busy || vm.running)
-                Button("Download & Install") { Task { await vm.downloadAndInstall() } }
-                    .disabled(vm.busy || vm.running || vm.selected == nil)
+                if vm.guest == .macOS {
+                    Picker("IPSW", selection: $vm.selected) {
+                        ForEach(vm.images) { Text($0.title).tag(Optional($0)) }
+                    }
+                    .frame(maxWidth: 320)
+                    .disabled(vm.busy || vm.running)
+                    Button("Download & Install") { Task { await vm.downloadAndInstall() } }
+                        .disabled(vm.busy || vm.running || vm.selected == nil)
+                } else {
+                    Button(vm.isInstalled ? "Attach ISO…" : "Install from ISO…") { chooseISO() }
+                        .disabled(vm.busy || vm.running)
+                    if let iso = vm.installerISO {
+                        Button("Eject \(iso.lastPathComponent)") { vm.ejectISO() }
+                            .disabled(vm.busy || vm.running)
+                    }
+                }
                 Spacer()
                 Button("Start") { Task { await vm.start() } }
                     .disabled(vm.busy || vm.running || !vm.isInstalled)
@@ -438,7 +560,9 @@ struct ContentView: View {
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "desktopcomputer").font(.system(size: 64))
-                        Text(vm.isInstalled ? "Press Start to boot the VM." : "Pick an IPSW and press Download & Install.")
+                        Text(vm.isInstalled ? "Press Start to boot the VM." : vm.guest == .macOS
+                             ? "Pick an IPSW and press Download & Install."
+                             : "Press Install from ISO… and choose an ARM64 (aarch64) \(vm.guest.title) ISO.")
                         Text("Drag an .app here to copy it into the VM.").foregroundStyle(.secondary)
                     }
                 }
@@ -466,5 +590,13 @@ struct ContentView: View {
             }
             .padding(10)
         }
+    }
+
+    private func chooseISO() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "iso") ?? .diskImage, .diskImage]
+        panel.message = "Choose an ARM64 \(vm.guest.title) installer ISO"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { await vm.installFromISO(url) }
     }
 }
