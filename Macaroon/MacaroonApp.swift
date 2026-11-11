@@ -734,18 +734,94 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
 
 struct VMView: NSViewRepresentable {
     let machine: VZVirtualMachine
-    // Windows' stock virtio GPU driver shows a corrupted picture after a resolution change, so Windows keeps its size.
-    var resizes = true
+    /// macOS guests get the window's full Retina pixel size. Windows/Linux get its size in points: they don't scale
+    /// their UI up for a high-DPI virtio display, so a Retina-sized desktop (e.g. 4802 × 2438) is unreadably small.
+    var retina = true
 
     func makeNSView(context: Context) -> VZVirtualMachineView {
         let view = VZVirtualMachineView()
         view.capturesSystemKeys = true
-        view.automaticallyReconfiguresDisplay = resizes
+        view.automaticallyReconfiguresDisplay = retina
+        context.coordinator.view = view
+        context.coordinator.retina = retina
         return view
     }
 
     func updateNSView(_ view: VZVirtualMachineView, context: Context) {
         view.virtualMachine = machine
+        context.coordinator.attach(machine.graphicsDevices.first?.displays.first)
+    }
+
+    static func dismantleNSView(_ view: VZVirtualMachineView, coordinator: Coordinator) {
+        coordinator.attach(nil)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    /// The guest may not take the exact size asked for (Windows' driver picks the nearest mode it has),
+    /// which leaves the picture letterboxed. Once the guest settles, reshape the window to its aspect ratio.
+    final class Coordinator: NSObject, VZGraphicsDisplayObserver {
+        weak var view: VZVirtualMachineView?
+        var retina = true
+        private var display: VZGraphicsDisplay?
+        private var resizeObservers: [NSObjectProtocol] = []
+        private var pending: DispatchWorkItem?
+
+        func attach(_ newDisplay: VZGraphicsDisplay?) {
+            guard newDisplay !== display else { return }
+            display?.removeObserver(self)
+            display = newDisplay
+            display?.addObserver(self)
+            resizeObservers.forEach(NotificationCenter.default.removeObserver)
+            resizeObservers = []
+            guard newDisplay != nil else { return }
+            for name in [NSWindow.didEndLiveResizeNotification, NSWindow.didResizeNotification] {
+                resizeObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                    guard let self, let window = self.view?.window, (note.object as? NSWindow) === window, !window.inLiveResize else { return }
+                    self.settle()
+                })
+            }
+            DispatchQueue.main.async { self.settle() }
+        }
+
+        /// Ask the guest for the view's size (points, when not Retina), then give it a moment to apply it before fitting.
+        private func settle() {
+            pending?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                if !self.retina, let display = self.display, let size = self.view?.bounds.size, size.width > 0, size.height > 0 {
+                    try? display.reconfigure(sizeInPixels: CGSize(width: size.width.rounded(), height: size.height.rounded()))
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.fit() }
+            }
+            pending = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+        }
+
+        func displayDidReconfigure(_ display: VZGraphicsDisplay) {
+            DispatchQueue.main.async { self.fit() }
+        }
+
+        private func fit() {
+            guard let size = display?.sizeInPixels, size.width > 0, size.height > 0,
+                  let view, let window = view.window, !window.inLiveResize,
+                  !window.styleMask.contains(.fullScreen) else { return }
+            let bounds = view.bounds.size
+            let aspect = size.width / size.height
+            guard bounds.height > 0, abs(bounds.width / bounds.height - aspect) > 0.01 else { return }
+            var frame = window.frame
+            let height = (bounds.width / aspect).rounded()
+            if let screen = window.screen?.visibleFrame, frame.height + height - bounds.height > screen.height {
+                // Too tall for the screen: keep the height and narrow the window instead.
+                let width = (bounds.height * aspect).rounded()
+                frame.origin.x += (bounds.width - width) / 2
+                frame.size.width += width - bounds.width
+            } else {
+                frame.origin.y -= height - bounds.height
+                frame.size.height += height - bounds.height
+            }
+            window.setFrame(frame, display: true, animate: true)
+        }
     }
 }
 
@@ -812,7 +888,7 @@ struct ContentView: View {
 
             ZStack {
                 if let machine = vm.machine, vm.running {
-                    VMView(machine: machine, resizes: vm.guest != .windows)
+                    VMView(machine: machine, retina: vm.guest == .macOS)
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "desktopcomputer").font(.system(size: 64))
