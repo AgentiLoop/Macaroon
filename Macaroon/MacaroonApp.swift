@@ -642,28 +642,10 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         do {
             return try await GuestAgent.exec(machine, command)
         } catch {
-            return "The guest agent didn't answer (\(error.localizedDescription)). It starts when Windows logs on. If this VM was installed before the agent existed, log on to Windows and press Install Guest Agent."
+            return "The guest agent didn't answer (\(error.localizedDescription)). It starts when Windows logs on; wait for the desktop and try again."
         }
     }
 
-    /// For VMs set up before the guest agent existed: types Win+R and a command into Windows that finds
-    /// "Install Macaroon Agent.cmd" on whichever drive letter the shared folder got and runs it from %TEMP%
-    /// (Windows can't start a program whose working folder is the virtiofs drive).
-    func typeAgentInstall() async {
-        guard running, let view = VMView.Coordinator.current else { return }
-        let command = "powershell -w h -c \"gdr -p FileSystem|%{$f=$_.Root+'Install Macaroon Agent.cmd';if(test-path $f){cd $env:TEMP;&$f}}\""
-        status = "Typing the agent installer command into Windows (Win+R)…"
-        view.window?.makeKeyAndOrderFront(nil)
-        view.window?.makeFirstResponder(view)
-        GuestKeyboard.press(15, in: view, modifier: (55, .command)) // Win+R
-        try? await Task.sleep(for: .seconds(1.5))
-        GuestKeyboard.type(command, in: view)
-        GuestKeyboard.press(36, in: view) // Return
-        try? await Task.sleep(for: .seconds(8))
-        guard let machine else { return }
-        let reply = (try? await GuestAgent.exec(machine, "ver")) ?? ""
-        status = reply.isEmpty ? "Typed the installer command, but the agent hasn't answered yet. Make sure you're logged on to the Windows desktop, then try again." : "Guest agent installed and running."
-    }
 
     /// Types the Mac clipboard's text into the guest as key presses (US layout), for guests without clipboard sharing.
     func typeClipboard() {
@@ -954,9 +936,9 @@ struct ContentView: View {
         VStack(spacing: 0) {
             HStack {
                 Picker("Guest", selection: $vm.guest) {
-                    ForEach(GuestOS.allCases) { Text($0.title).tag($0) }
+                    ForEach(GuestOS.allCases) { Text($0 == .macOS ? "Mac" : $0 == .linux ? "Linux" : "Windows").tag($0) }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
                 .fixedSize()
                 .disabled(vm.busy || vm.running)
                 if vm.guest == .macOS {
@@ -1002,8 +984,6 @@ struct ContentView: View {
                 Button("Shared Folder") { NSWorkspace.shared.open(vm.sharedURL) }
                 if vm.guest == .windows {
                     Button("Run Command…") { runCommand() }
-                        .disabled(!vm.running)
-                    Button("Install Guest Agent") { Task { await vm.typeAgentInstall() } }
                         .disabled(!vm.running)
                 }
                 if vm.guest == .linux {
