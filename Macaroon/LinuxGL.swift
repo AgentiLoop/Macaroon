@@ -22,7 +22,9 @@ final class LinuxGL: NSObject, VZVirtioSocketListenerDelegate {
         super.init()
         unlink(socketPath)
         server.executableURL = Self.serverURL
-        server.arguments = ["--socket-path", socketPath]
+        // No fork per client: Metal (under Apple's OpenGL) can't build pipelines in a forked child, so every draw came out
+        // black. Clients are then served one at a time (--multi-clients needs vtest protocol 3, which virpipe over vsock lacks).
+        server.arguments = ["--no-fork", "--socket-path", socketPath]
         let log = Self.serverURL.deletingLastPathComponent().appendingPathComponent("server.log")
         FileManager.default.createFile(atPath: log.path, contents: nil)
         server.standardOutput = try? FileHandle(forWritingTo: log)
