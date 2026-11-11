@@ -98,6 +98,7 @@ enum WindowsSetup {
             try crlf(installScript).write(to: folder.appendingPathComponent("install.cmd"), atomically: true, encoding: .utf8)
             try crlf(setupComplete).write(to: folder.appendingPathComponent("SetupComplete.cmd"), atomically: true, encoding: .utf8)
             try crlf(unattend(language: language)).write(to: folder.appendingPathComponent("unattend.xml"), atomically: true, encoding: .utf8)
+            try crlf(agentScript).write(to: folder.appendingPathComponent("agent.ps1"), atomically: true, encoding: .utf8)
             try WindowsEFIBinaries.framebuffer.write(to: folder.appendingPathComponent("framebuffer.efi"))
             try WindowsEFIBinaries.loader.write(to: folder.appendingPathComponent("loader.efi"))
             try fm.copyItem(at: winFsp, to: folder.appendingPathComponent("winfsp.msi"))
@@ -350,6 +351,7 @@ enum WindowsSetup {
         copy /y %T%\SetupComplete.cmd W:\Windows\Setup\Scripts\SetupComplete.cmd >> %LOG% || goto fail
         copy /y %T%\winfsp.msi W:\ProgramData\Macaroon\winfsp.msi >> %LOG% || goto fail
         copy /y %T%\virtiofs.exe W:\ProgramData\Macaroon\virtiofs.exe >> %LOG% || goto fail
+        copy /y %T%\agent.ps1 W:\ProgramData\Macaroon\agent.ps1 >> %LOG% || goto fail
 
         echo [%time%] boot files >> %LOG%
         bcdboot W:\Windows /s S: /f UEFI >> %LOG% 2>&1 || goto fail
@@ -369,17 +371,157 @@ enum WindowsSetup {
 
         """#
 
-    /// Runs once as SYSTEM at the end of setup: shared folder support, then a marker for the host, then power off.
+    /// Runs once as SYSTEM at the end of setup: shared folder support, the guest agent (started at every logon,
+    /// with automatic logon so it is always there), then a marker for the host, then power off.
     static let setupComplete = #"""
         @echo off
         powercfg /hibernate off
         start /wait "" msiexec /i C:\ProgramData\Macaroon\winfsp.msi /qn /norestart
         sc create VirtioFsSvc binpath= C:\ProgramData\Macaroon\virtiofs.exe start= auto depend= WinFsp.Launcher/VirtioFsDrv DisplayName= "Virtio FS Service"
+        reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run /v MacaroonAgent /t REG_SZ /d "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\ProgramData\Macaroon\agent.ps1" /f
+        set WL="HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+        reg add %WL% /v AutoAdminLogon /t REG_SZ /d 1 /f
+        reg add %WL% /v DefaultUserName /t REG_SZ /d "\#(username)" /f
+        reg add %WL% /v DefaultPassword /t REG_SZ /d "\#(password)" /f
+        reg delete %WL% /v AutoLogonCount /f
         mountvol S: /S
         mkdir S:\EFI\Macaroon 2>nul
         echo done> S:\EFI\Macaroon\installed
         mountvol S: /D
         shutdown /s /t 5 /c "Macaroon: Windows setup complete"
+
+        """#
+
+    /// Port the guest agent listens on (virtio-vsock, through virtio-win's viosock Winsock provider).
+    static let agentPort: UInt32 = 52000
+
+    /// Guest agent, run at logon in the user's session (so it can reach the clipboard). One request per
+    /// connection, one line: "exec <command>" streams cmd.exe's output back; "clip-get" returns the clipboard
+    /// text; "clip-set <base64 UTF-8>" sets it. Its log is %TEMP%\macaroon-agent.log.
+    static let agentScript = #"""
+        Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @'
+        using System;
+        using System.Diagnostics;
+        using System.Net;
+        using System.Net.Sockets;
+        using System.Runtime.InteropServices;
+        using System.Text;
+        using System.Threading;
+        using System.Windows.Forms;
+
+        public class VsockEndPoint : EndPoint {
+            readonly AddressFamily family; uint cid, port;
+            public VsockEndPoint(AddressFamily family, uint cid, uint port) { this.family = family; this.cid = cid; this.port = port; }
+            public override AddressFamily AddressFamily { get { return family; } }
+            // sockaddr_vm: family, reserved, port, cid
+            public override SocketAddress Serialize() {
+                var a = new SocketAddress(family, 16);
+                for (int i = 0; i < 4; i++) { a[4 + i] = (byte)(port >> (8 * i)); a[8 + i] = (byte)(cid >> (8 * i)); }
+                return a;
+            }
+            public override EndPoint Create(SocketAddress a) {
+                uint p = 0, c = 0;
+                for (int i = 0; i < 4; i++) { p |= (uint)a[4 + i] << (8 * i); c |= (uint)a[8 + i] << (8 * i); }
+                return new VsockEndPoint(family, c, p);
+            }
+        }
+
+        public static class MacaroonAgent {
+            [DllImport("ws2_32.dll", CharSet = CharSet.Unicode)]
+            static extern int WSAEnumProtocolsW(IntPtr protocols, IntPtr buffer, ref int length);
+            static string logPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "macaroon-agent.log");
+            static void Log(string s) { try { System.IO.File.AppendAllText(logPath, DateTime.Now.ToString("s") + " " + s + "\r\n"); } catch { } }
+
+            // viosock registers its own address family; find it by the provider's name
+            static AddressFamily VsockFamily() {
+                new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp).Close(); // WSAStartup
+                int length = 0;
+                WSAEnumProtocolsW(IntPtr.Zero, IntPtr.Zero, ref length);
+                IntPtr buffer = Marshal.AllocHGlobal(length);
+                int count = WSAEnumProtocolsW(IntPtr.Zero, buffer, ref length);
+                int family = 40;
+                for (int i = 0; i < count; i++) {
+                    IntPtr info = new IntPtr(buffer.ToInt64() + i * 628); // sizeof(WSAPROTOCOL_INFOW)
+                    int af = Marshal.ReadInt32(info, 76);
+                    string name = Marshal.PtrToStringUni(new IntPtr(info.ToInt64() + 116));
+                    Log("provider " + af + " " + name);
+                    if (name.IndexOf("vsock", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("virtio", StringComparison.OrdinalIgnoreCase) >= 0) family = af;
+                }
+                Marshal.FreeHGlobal(buffer);
+                return (AddressFamily)family;
+            }
+
+            public static void Run(uint port) {
+                try {
+                    var family = VsockFamily();
+                    var server = new Socket(family, SocketType.Stream, ProtocolType.Unspecified);
+                    server.Bind(new VsockEndPoint(family, 0xFFFFFFFF, port));
+                    server.Listen(8);
+                    Log("listening on " + (int)family + ":" + port);
+                    while (true) {
+                        Socket client = server.Accept();
+                        new Thread(() => Handle(client)) { IsBackground = true }.Start();
+                    }
+                } catch (Exception e) { Log(e.ToString()); }
+            }
+
+            static void Send(Socket s, string text) {
+                byte[] data = Encoding.UTF8.GetBytes(text);
+                int sent = 0;
+                while (sent < data.Length) sent += s.Send(data, sent, data.Length - sent, SocketFlags.None);
+            }
+
+            static void Handle(Socket s) {
+                try {
+                    var line = new System.IO.MemoryStream();
+                    var one = new byte[1];
+                    while (s.Receive(one) == 1 && one[0] != 10) line.WriteByte(one[0]);
+                    string request = Encoding.UTF8.GetString(line.ToArray()).TrimEnd('\r');
+                    if (request.StartsWith("exec ")) Exec(s, request.Substring(5));
+                    else if (request == "clip-get") Send(s, OnSTA(() => Clipboard.ContainsText() ? Clipboard.GetText() : ""));
+                    else if (request.StartsWith("clip-set ")) {
+                        string text = Encoding.UTF8.GetString(Convert.FromBase64String(request.Substring(9)));
+                        OnSTA(() => { if (text.Length > 0) Clipboard.SetText(text); return ""; });
+                    }
+                } catch (Exception e) { Log(e.ToString()); }
+                try { s.Shutdown(SocketShutdown.Both); } catch { }
+                s.Close();
+            }
+
+            static void Exec(Socket s, string command) {
+                var encoding = Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
+                var info = new ProcessStartInfo("cmd.exe", "/d /c " + command) {
+                    UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
+                    RedirectStandardOutput = true, RedirectStandardError = true,
+                    StandardOutputEncoding = encoding, StandardErrorEncoding = encoding,
+                    WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+                };
+                var lockObject = new object();
+                DataReceivedEventHandler forward = (sender, e) => { if (e.Data != null) lock (lockObject) { try { Send(s, e.Data + "\n"); } catch { } } };
+                using (var process = new Process { StartInfo = info }) {
+                    process.OutputDataReceived += forward;
+                    process.ErrorDataReceived += forward;
+                    process.Start();
+                    process.StandardInput.Close();
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
+                    process.WaitForExit();
+                    if (process.ExitCode != 0) lock (lockObject) Send(s, "[exit code " + process.ExitCode + "]\n");
+                }
+            }
+
+            static string OnSTA(Func<string> body) {
+                string result = ""; Exception error = null;
+                var thread = new Thread(() => { try { result = body(); } catch (Exception e) { error = e; } });
+                thread.SetApartmentState(ApartmentState.STA);
+                thread.Start();
+                thread.Join();
+                if (error != null) throw error;
+                return result;
+            }
+        }
+        '@
+        [MacaroonAgent]::Run(\#(agentPort))
 
         """#
 

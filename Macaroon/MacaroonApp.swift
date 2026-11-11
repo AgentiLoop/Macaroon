@@ -492,6 +492,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         config.keyboards = [VZUSBKeyboardConfiguration()]
         config.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
         try addCommonDevices(to: config)
+        if guest == .windows { config.socketDevices = [VZVirtioSocketDeviceConfiguration()] } // guest agent
         try config.validate()
         return config
     }
@@ -566,7 +567,9 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             switch guest {
             case .macOS: status = "Running. Drag an app onto the window; in the VM open /Volumes/My Shared Files."
             case .linux: status = installerISO != nil ? "Booting the installer ISO. After installing, Stop and Eject ISO." : "Running. Shared folder: mount -t virtiofs com.apple.virtio-fs.automount /mnt"
-            case .windows: status = setupPhase == "media" ? "Installing Windows from Media.img (WinPE, unattended). The VM powers off when done." : "Running."
+            case .windows:
+                status = setupPhase == "media" ? "Installing Windows from Media.img (WinPE, unattended). The VM powers off when done." : "Running."
+                if setupPhase == nil { clipboardTask = Task { await GuestAgent.syncClipboard(vm) } }
             }
         } catch {
             machine = nil
@@ -597,7 +600,21 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         }
     }
 
+    private var clipboardTask: Task<Void, Never>?
+
+    /// Runs a cmd.exe command line in the Windows guest through the guest agent and returns its output.
+    func runInWindows(_ command: String) async -> String {
+        guard let machine, running else { return "The VM is not running." }
+        do {
+            return try await GuestAgent.exec(machine, command)
+        } catch {
+            return "The guest agent didn't answer (\(error.localizedDescription)). It starts when Windows logs on."
+        }
+    }
+
     private func guestStopped() {
+        clipboardTask?.cancel()
+        clipboardTask = nil
         machine = nil
         running = false
         status = "VM stopped."
@@ -786,6 +803,10 @@ struct ContentView: View {
                 .fixedSize()
                 .disabled(vm.busy || !vm.isInstalled)
                 Button("Shared Folder") { NSWorkspace.shared.open(vm.sharedURL) }
+                if vm.guest == .windows {
+                    Button("Run Command…") { runCommand() }
+                        .disabled(!vm.running)
+                }
             }
             .padding(10)
 
@@ -824,6 +845,35 @@ struct ContentView: View {
                 if let p = vm.progress { ProgressView(value: p).frame(width: 220) }
             }
             .padding(10)
+        }
+    }
+
+    /// Asks for a cmd.exe command line, runs it in Windows, shows its output.
+    private func runCommand() {
+        let alert = NSAlert()
+        alert.messageText = "Run in Windows"
+        alert.informativeText = "A cmd.exe command line, e.g. ver or winget install Git.Git"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Run")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty else { return }
+        let command = field.stringValue
+        vm.status = "Running \(command) in Windows…"
+        Task {
+            let output = await vm.runInWindows(command)
+            vm.status = "Ran \(command) in Windows."
+            let result = NSAlert()
+            result.messageText = command
+            let scroll = NSTextView.scrollableTextView()
+            scroll.frame = NSRect(x: 0, y: 0, width: 640, height: 360)
+            let text = scroll.documentView as! NSTextView
+            text.isEditable = false
+            text.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+            text.string = output.isEmpty ? "(no output)" : output
+            result.accessoryView = scroll
+            result.runModal()
         }
     }
 
