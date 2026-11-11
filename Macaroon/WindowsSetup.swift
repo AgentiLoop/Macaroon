@@ -530,8 +530,15 @@ enum WindowsSetup {
                 return (AddressFamily)family;
             }
 
+            [DllImport("kernel32.dll")] static extern uint SetThreadExecutionState(uint flags);
+            [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint action, uint param, IntPtr vparam, uint winIni);
+
             // Retries forever: at logon the viosock Winsock provider (VirtioSocketWSP service) may not be registered yet
             public static void Run(uint port) {
+                // Never blank the VM's screen: no screen saver, and keep the display (and system) awake while this
+                // thread lives. ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED; SPI_SETSCREENSAVEACTIVE off
+                SystemParametersInfo(17, 0, IntPtr.Zero, 3);
+                SetThreadExecutionState(0x80000000 | 0x2 | 0x1);
                 while (true) {
                     Socket server = null;
                     try {
