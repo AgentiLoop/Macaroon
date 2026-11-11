@@ -431,36 +431,8 @@ enum WindowsSetup {
         rem Undo the forced 200% scaling an earlier installer set (it doubled everything); takes effect at next sign-in
         reg delete "HKCU\Control Panel\Desktop" /v LogPixels /f >nul 2>&1
         reg delete "HKCU\Control Panel\Desktop" /v Win8DpiScaling /f >nul 2>&1
-        rem An earlier installer put in a patched, test-signed viogpudo: Windows bugchecks with it (at logon and when
-        rem the window is resized). Go back to virtio-win's (admin, so Windows asks once) and restart to load it.
-        if exist C:\ProgramData\Macaroon\viogpudo-vz\ if exist "%~dp0viogpudo-remove.ps1" (
-          copy /y "%~dp0viogpudo-remove.ps1" C:\ProgramData\Macaroon\viogpudo-remove.ps1
-          powershell -NoProfile -Command "exit (Start-Process -Verb RunAs -Wait -PassThru powershell.exe -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\Macaroon\viogpudo-remove.ps1').ExitCode" && (
-            echo Restarting Windows to load the standard display driver...
-            rem Virtualization.framework stops the VM when Windows restarts; this tells Macaroon to start it again
-            echo.> "%~dp0Macaroon restart"
-            shutdown /r /t 10 /c "Macaroon: restarting to load the standard display driver"
-          )
-        )
         echo Macaroon guest agent installed and started.
         timeout /t 3 >nul
-
-        """#
-
-    /// Run as administrator by agentInstaller: removes the patched viogpudo an earlier installer added (its boot task,
-    /// driver package, test certificate and test signing) so Windows binds virtio-win's viogpudo again.
-    static let gpuDriverRemoval = #"""
-        Start-Transcript -Append (Join-Path $env:ProgramData 'Macaroon\viogpudo-vz.log') | Out-Null
-        schtasks /delete /f /tn 'Macaroon viogpudo-vz'
-        function Patched { Get-WindowsDriver -Online | Where-Object { $_.OriginalFileName -like '*\viogpudo.inf' -and $_.Version -eq '100.6.101.58000' } }
-        foreach ($d in Patched) { pnputil /delete-driver $d.Driver /uninstall /force }
-        if (Patched) { exit 1 }
-        pnputil /scan-devices
-        certutil -delstore Root 0fe9d0a10924022ca38a9e469c88acf8d882785a
-        certutil -delstore TrustedPublisher 0fe9d0a10924022ca38a9e469c88acf8d882785a
-        bcdedit /set '{current}' testsigning off
-        Remove-Item -Recurse -Force (Join-Path $env:ProgramData 'Macaroon\viogpudo-vz'), (Join-Path $env:ProgramData 'Macaroon\viogpudo-vz.done') -ErrorAction SilentlyContinue
-        exit 0
 
         """#
 
