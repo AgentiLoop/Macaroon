@@ -46,6 +46,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     var auxURL: URL { root.appendingPathComponent("AuxiliaryStorage") }
     var modelURL: URL { root.appendingPathComponent("HardwareModel") }
     var machineIDURL: URL { root.appendingPathComponent("MachineIdentifier") }
+    var macURL: URL { root.appendingPathComponent("MACAddress") }
     var ipswURL: URL { root.appendingPathComponent("Restore.ipsw") }
     var sharedURL: URL { root.appendingPathComponent("Shared") }
     var snapshotsURL: URL { root.appendingPathComponent("Snapshots") }
@@ -198,6 +199,12 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         config.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: diskURL, readOnly: false))]
         let network = VZVirtioNetworkDeviceConfiguration()
         network.attachment = VZNATNetworkDeviceAttachment()
+        // A new random MAC on every launch makes saved running state un-restorable ("invalid argument"), so keep one.
+        if let saved = try? String(contentsOf: macURL, encoding: .utf8), let mac = VZMACAddress(string: saved) {
+            network.macAddress = mac
+        } else {
+            try network.macAddress.string.write(to: macURL, atomically: true, encoding: .utf8)
+        }
         config.networkDevices = [network]
         config.keyboards = [VZMacKeyboardConfiguration()]
         config.pointingDevices = [VZMacTrackpadConfiguration(), VZUSBScreenCoordinatePointingDeviceConfiguration()]
@@ -333,7 +340,14 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             status = "Restoring running state from \(snapshot.name)…"
             let vm = try makeMachine()
             machine = vm
-            try await vm.restoreMachineStateFrom(url: snapshot.url.appendingPathComponent(stateFile))
+            do {
+                try await vm.restoreMachineStateFrom(url: snapshot.url.appendingPathComponent(stateFile))
+            } catch {
+                // The disk is already restored; only the running state can't be used.
+                machine = nil
+                status = "Restored disk from \(snapshot.name); running state could not be restored (\(error.localizedDescription)). Press Start."
+                return
+            }
             try await vm.resume()
             running = true
             status = "Restored \(snapshot.name)."
