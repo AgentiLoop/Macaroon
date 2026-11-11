@@ -63,11 +63,18 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             status = isInstalled ? "\(guest.title) VM installed. Press Start." : guest == .macOS
                 ? "Choose a macOS IPSW from Apple, then Download & Install."
                 : "Choose an ARM64 \(guest.title) installer ISO."
-            Task { await loadISOCatalog() }
+            // Show the cached list for the new guest right away; fetch only if it was never loaded
+            showISOs()
+            if guest != .macOS, isoCache[guest] == nil { Task { await loadISOCatalog(guest) } }
         }
     }
     @Published var isos: [InstallerISO] = []
-    @Published var selectedISO: InstallerISO?
+    @Published var selectedISO: InstallerISO? {
+        didSet { if let selectedISO { isoChoice[guest] = selectedISO } }
+    }
+    /// ISO lists and the user's pick per guest, so switching guests doesn't blank the ISO menu.
+    private var isoCache: [GuestOS: [InstallerISO]] = [:]
+    private var isoChoice: [GuestOS: InstallerISO] = [:]
 
     static let catalogURL = URL(string: "https://mesu.apple.com/assets/macos/com_apple_macOSIPSW/com_apple_macOSIPSW.xml")!
     let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Macaroon")
@@ -337,21 +344,34 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     static let msProfile = "606624d44113"
     private let msSession = UUID().uuidString.lowercased()
 
+    /// Loads the Linux and Windows ISO lists together at launch, so switching guests later is instant.
     func loadISOCatalog() async {
-        let wanted = guest
+        async let linux: Void = loadISOCatalog(.linux)
+        async let windows: Void = loadISOCatalog(.windows)
+        _ = await (linux, windows)
+    }
+
+    private func loadISOCatalog(_ wanted: GuestOS) async {
         guard wanted != .macOS else { return }
-        isos = []
-        selectedISO = nil
         do {
             let found = wanted == .linux ? try await ubuntuISOs() : try await windowsISOs()
+            isoCache[wanted] = found
             guard guest == wanted else { return }
-            isos = found
-            selectedISO = wanted == .windows ? found.first { $0.title.hasSuffix("– English") } ?? found.first : found.first
+            showISOs()
             if !isInstalled { status = "Choose a \(wanted == .linux ? "Ubuntu" : "Windows 11 ARM") ISO, then Download & Install." }
         } catch {
             guard guest == wanted else { return }
             status = "Could not load the \(wanted.title) ISO list: \(error.localizedDescription)"
         }
+    }
+
+    /// Puts the current guest's cached ISO list (and its last pick) into the menu in one update.
+    private func showISOs() {
+        let found = isoCache[guest] ?? []
+        let pick = isoChoice[guest].flatMap { found.contains($0) ? $0 : nil }
+            ?? (guest == .windows ? found.first { $0.title.hasSuffix("– English") } : nil) ?? found.first
+        isos = found
+        selectedISO = pick
     }
 
     /// The newest point release of each Ubuntu release (22.04 and later), desktop and server, arm64.
@@ -951,6 +971,7 @@ struct ContentView: View {
                         .disabled(vm.busy || vm.running || vm.selected == nil)
                 } else {
                     Picker("ISO", selection: $vm.selectedISO) {
+                        if vm.isos.isEmpty { Text("Loading…").tag(InstallerISO?.none) }
                         ForEach(vm.isos) { Text($0.title).tag(Optional($0)) }
                     }
                     .frame(maxWidth: 320)
