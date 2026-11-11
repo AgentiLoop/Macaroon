@@ -332,12 +332,23 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         return URL(string: uri)
     }
 
-    /// A finished Windows ARM64 ISO in ~/Downloads (Safari/Chrome only rename it to .iso once complete).
+    /// The newest finished Windows ARM64 ISO in ~/Downloads (Safari/Chrome only rename it to .iso once complete).
+    /// Fuzzy: Microsoft names it e.g. Win11_25H2_English_Arm64.iso or Windows11_Client_arm64_en-us_26300_9457.iso.
     private var downloadedWindowsISO: URL? {
         let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-        let files = (try? FileManager.default.contentsOfDirectory(at: downloads, includingPropertiesForKeys: nil)) ?? []
-        return files.first { $0.lastPathComponent.lowercased().hasPrefix("win11") && $0.lastPathComponent.lowercased().hasSuffix("arm64.iso") }
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey]
+        let files = (try? FileManager.default.contentsOfDirectory(at: downloads, includingPropertiesForKeys: keys)) ?? []
+        let candidates = files.filter { url in
+            let name = url.lastPathComponent.lowercased()
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            return name.hasSuffix(".iso") && name.contains("win")
+                && ["arm64", "aarch64", "arm"].contains { name.contains($0) }
+                && size > 1_000_000_000
+        }
+        func date(_ url: URL) -> Date { (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast }
+        return candidates.max { date($0) < date($1) }
     }
+
 
     func downloadAndInstallISO() async {
         guard let iso = selectedISO else { return }
@@ -359,7 +370,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
                 } else {
                     // Microsoft blocked the direct link: download in the browser and pick it up from ~/Downloads.
                     NSWorkspace.shared.open(Self.windowsPage)
-                    status = "Microsoft requires its web page: choose the language, click Download (64-bit ARM). Waiting for Win11…Arm64.iso in Downloads…"
+                    status = "Microsoft requires its web page: choose the language, click Download (64-bit ARM). Waiting for a Windows ARM64 .iso in Downloads…"
                     while guest == wanted, downloadedWindowsISO == nil { try await Task.sleep(for: .seconds(3)) }
                     guard let local = downloadedWindowsISO else { return }
                     file = local
