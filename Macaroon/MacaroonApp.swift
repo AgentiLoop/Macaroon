@@ -569,7 +569,12 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             case .linux: status = installerISO != nil ? "Booting the installer ISO. After installing, Stop and Eject ISO." : "Running. Shared folder: mount -t virtiofs com.apple.virtio-fs.automount /mnt"
             case .windows:
                 status = setupPhase == "media" ? "Installing Windows from Media.img (WinPE, unattended). The VM powers off when done." : "Running."
-                if setupPhase == nil { clipboardTask = Task { await GuestAgent.syncClipboard(vm) } }
+                if setupPhase == nil {
+                    // Lets VMs installed before the guest agent existed install (or update) it from the shared folder
+                    try? WindowsSetup.crlf(WindowsSetup.agentScript).write(to: sharedURL.appendingPathComponent("agent.ps1"), atomically: true, encoding: .utf8)
+                    try? WindowsSetup.crlf(WindowsSetup.agentInstaller).write(to: sharedURL.appendingPathComponent("Install Macaroon Agent.cmd"), atomically: true, encoding: .utf8)
+                    clipboardTask = Task { await GuestAgent.syncClipboard(vm) }
+                }
             }
         } catch {
             machine = nil
@@ -608,7 +613,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         do {
             return try await GuestAgent.exec(machine, command)
         } catch {
-            return "The guest agent didn't answer (\(error.localizedDescription)). It starts when Windows logs on."
+            return "The guest agent didn't answer (\(error.localizedDescription)). It starts when Windows logs on. If this VM was installed before the agent existed, run \"Install Macaroon Agent.cmd\" from the shared folder drive in Windows once."
         }
     }
 

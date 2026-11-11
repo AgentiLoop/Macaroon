@@ -401,6 +401,20 @@ enum WindowsSetup {
 
         """#
 
+    /// For VMs installed before the agent existed: Macaroon puts this and agent.ps1 in the shared folder; running it
+    /// once in Windows installs the agent for the current user (no admin needed) and starts it.
+    static let agentInstaller = #"""
+        @echo off
+        set A=%LOCALAPPDATA%\Macaroon
+        mkdir "%A%" 2>nul
+        copy /y "%~dp0agent.ps1" "%A%\agent.ps1" || (pause & exit /b 1)
+        reg add HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v MacaroonAgent /t REG_SZ /d "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"%A%\agent.ps1\"" /f
+        start "" powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%A%\agent.ps1"
+        echo Macaroon guest agent installed and started.
+        timeout /t 3 >nul
+
+        """#
+
     /// Port the guest agent listens on (virtio-vsock, through virtio-win's viosock Winsock provider).
     static let agentPort: UInt32 = 52000
 
@@ -460,18 +474,24 @@ enum WindowsSetup {
                 return (AddressFamily)family;
             }
 
+            // Retries forever: at logon the viosock Winsock provider (VirtioSocketWSP service) may not be registered yet
             public static void Run(uint port) {
-                try {
-                    var family = VsockFamily();
-                    var server = new Socket(family, SocketType.Stream, ProtocolType.Unspecified);
-                    server.Bind(new VsockEndPoint(family, 0xFFFFFFFF, port));
-                    server.Listen(8);
-                    Log("listening on " + (int)family + ":" + port);
-                    while (true) {
-                        Socket client = server.Accept();
-                        new Thread(() => Handle(client)) { IsBackground = true }.Start();
-                    }
-                } catch (Exception e) { Log(e.ToString()); }
+                while (true) {
+                    Socket server = null;
+                    try {
+                        var family = VsockFamily();
+                        server = new Socket(family, SocketType.Stream, ProtocolType.Unspecified);
+                        server.Bind(new VsockEndPoint(family, 0xFFFFFFFF, port));
+                        server.Listen(8);
+                        Log("listening on " + (int)family + ":" + port);
+                        while (true) {
+                            Socket client = server.Accept();
+                            new Thread(() => Handle(client)) { IsBackground = true }.Start();
+                        }
+                    } catch (Exception e) { Log(e.ToString()); }
+                    if (server != null) server.Close();
+                    Thread.Sleep(5000);
+                }
             }
 
             static void Send(Socket s, string text) {
