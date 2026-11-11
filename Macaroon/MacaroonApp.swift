@@ -580,7 +580,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             case .linux:
                 status = installerISO != nil ? "Booting the installer ISO. After installing, Stop and Eject ISO." : "Running. Shared folder: mount -t virtiofs com.apple.virtio-fs.automount /mnt"
                 linuxGL = LinuxGL(machine: vm)
-                if linuxGL != nil, installerISO == nil {
+                if linuxGL != nil { // the installed system can boot with the ISO still attached, so don't wait for an eject
                     try? LinuxGL.guestSetupScript.write(to: sharedURL.appendingPathComponent("Set Up 3D.sh"), atomically: true, encoding: .utf8)
                     status += ". GPU OpenGL: run sudo sh \"/mnt/Set Up 3D.sh\" once, then macaroon-gl <app>"
                 }
