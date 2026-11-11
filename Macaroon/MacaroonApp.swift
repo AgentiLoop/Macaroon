@@ -655,6 +655,19 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         status = reply.isEmpty ? "Typed the installer command, but the agent hasn't answered yet. Make sure you're logged on to the Windows desktop, then try again." : "Guest agent installed and running."
     }
 
+    /// Types the Mac clipboard's text into the guest as key presses (US layout), for guests without clipboard sharing.
+    func typeClipboard() {
+        guard running, let view = VMView.Coordinator.current else { return }
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+            status = "The Mac clipboard has no text to paste."
+            return
+        }
+        view.window?.makeKeyAndOrderFront(nil)
+        view.window?.makeFirstResponder(view)
+        GuestKeyboard.type(text, in: view)
+        status = "Typed \(text.count) characters from the Mac clipboard (US layout; other characters are skipped)."
+    }
+
     private func guestStopped() {
         clipboardTask?.cancel()
         clipboardTask = nil
@@ -786,6 +799,8 @@ enum GuestKeyboard {
     static func type(_ text: String, in view: NSView) {
         for ch in text {
             if ch == " " { press(49, in: view); continue }
+            if ch == "\n" || ch == "\r\n" || ch == "\r" { press(36, in: view); continue }
+            if ch == "\t" { press(48, in: view); continue }
             if let i = unshifted.firstIndex(of: ch) {
                 press(UInt16(i), in: view)
             } else if let i = shifted.firstIndex(of: ch) {
@@ -971,6 +986,11 @@ struct ContentView: View {
                     Button("Run Command…") { runCommand() }
                         .disabled(!vm.running)
                     Button("Install Guest Agent") { Task { await vm.typeAgentInstall() } }
+                        .disabled(!vm.running)
+                }
+                if vm.guest == .linux {
+                    Button("Paste") { vm.typeClipboard() }
+                        .help("Types the Mac clipboard's text into Linux")
                         .disabled(!vm.running)
                 }
             }
