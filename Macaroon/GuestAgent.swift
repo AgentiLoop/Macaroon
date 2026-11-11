@@ -24,10 +24,11 @@ enum GuestAgent {
         try await request(machine, "exec " + command)
     }
 
-    /// Turns off Windows' display timeout, sleep and screen saver (VMs installed before setup did), retrying
-    /// until the agent answers. Gives up after about five minutes.
+    /// Turns off Windows' display timeout, sleep and screen saver (VMs installed before setup did) and sets its time
+    /// zone to the Mac's, retrying until the agent answers. Gives up after about five minutes.
     static func keepScreenOn(_ machine: VZVirtualMachine) async {
         let command = #"powercfg /change monitor-timeout-ac 0 & powercfg /change monitor-timeout-dc 0 & powercfg /change standby-timeout-ac 0 & powercfg /change standby-timeout-dc 0 & reg add "HKCU\Control Panel\Desktop" /v ScreenSaveActive /t REG_SZ /d 0 /f"#
+            + " & tzutil /s \"\(WindowsSetup.windowsTimeZone)\""
         for _ in 0..<60 {
             if (try? await exec(machine, command)) != nil { return }
             try? await Task.sleep(for: .seconds(5))

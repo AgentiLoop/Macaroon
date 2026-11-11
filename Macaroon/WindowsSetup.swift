@@ -26,6 +26,19 @@ enum WindowsSetup {
         ["/opt/homebrew/bin/wimlib-imagex", "/usr/local/bin/wimlib-imagex"].first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
+    /// The Mac's time zone as a Windows time zone ID (e.g. "Eastern Standard Time"), through ICU; "UTC" if unknown.
+    static var windowsTimeZone: String {
+        typealias Convert = @convention(c) (UnsafePointer<UInt16>, Int32, UnsafeMutablePointer<UInt16>, Int32, UnsafeMutablePointer<Int32>) -> Int32
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "ucal_getWindowsTimeZoneID") else { return "UTC" } // RTLD_DEFAULT
+        let convert = unsafeBitCast(symbol, to: Convert.self)
+        let id = Array(TimeZone.current.identifier.utf16)
+        var result = [UInt16](repeating: 0, count: 128)
+        var status: Int32 = 0
+        let length = convert(id, Int32(id.count), &result, Int32(result.count), &status)
+        guard status <= 0, length > 0 else { return "UTC" }
+        return String(decoding: result[0..<Int(length)], as: UTF16.self)
+    }
+
     static func fail(_ message: String) -> NSError {
         NSError(domain: "Macaroon", code: 10, userInfo: [NSLocalizedDescriptionKey: message])
     }
@@ -419,6 +432,9 @@ enum WindowsSetup {
         powercfg /change standby-timeout-ac 0
         powercfg /change standby-timeout-dc 0
         reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Control Panel\Desktop" /v ScreenSaveActive /t REG_SZ /d 0 /f
+        rem The VM's clock (RTC) runs on UTC, Windows assumes local time; also keep it synced from the internet
+        reg add HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation /v RealTimeIsUniversal /t REG_DWORD /d 1 /f
+        sc config w32time start= auto
         rem Test-signed viogpudo build: trust its certificate (test signing is already on from install.cmd)
         if exist C:\ProgramData\Macaroon\VirtIOTestCert.cer (
           certutil -f -addstore Root C:\ProgramData\Macaroon\VirtIOTestCert.cer
@@ -461,6 +477,10 @@ enum WindowsSetup {
           if exist C:\ProgramData\Macaroon\vgpusrv.exe (
             powershell -NoProfile -Command "Start-Process -Verb RunAs -Wait C:\ProgramData\Macaroon\vgpusrv.exe -ArgumentList '-i'"
           )
+        )
+        rem VMs installed before setup set it: the VM's clock runs on UTC, so tell Windows (needs admin, asked once)
+        reg query HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation /v RealTimeIsUniversal >nul 2>&1 || (
+          powershell -NoProfile -Command "Start-Process -Verb RunAs -Wait cmd.exe -ArgumentList '/c reg add HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation /v RealTimeIsUniversal /t REG_DWORD /d 1 /f & sc config w32time start= auto & net start w32time & w32tm /resync /force'"
         )
         rem Undo the forced 200% scaling an earlier installer set (it doubled everything); takes effect at next sign-in
         reg delete "HKCU\Control Panel\Desktop" /v LogPixels /f >nul 2>&1
@@ -653,7 +673,7 @@ enum WindowsSetup {
               <settings pass="specialize">
                 <component \(shell)>
                   <ComputerName>MACAROON-WIN</ComputerName>
-                  <TimeZone>UTC</TimeZone>
+                  <TimeZone>\(windowsTimeZone)</TimeZone>
                 </component>
               </settings>
               <settings pass="oobeSystem">
