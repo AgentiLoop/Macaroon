@@ -214,7 +214,8 @@ final class ResizeBar: NSView {
 
 /// WebKit's page scrollbars can't be restyled reliably (pages and newer WebKit override ::-webkit-scrollbar), so
 /// they're hidden and the page gets an AppKit PageScroller instead; the page reports its scroll position to it.
-let hideScrollbarsCSS = "html,body{scrollbar-width:none !important}::-webkit-scrollbar{display:none !important;width:0 !important;height:0 !important}"
+/// Pages scroll vertically only: no horizontal scrolling or scrollbar.
+let hideScrollbarsCSS = "html,body{scrollbar-width:none !important;overflow-x:hidden !important}::-webkit-scrollbar{display:none !important;width:0 !important;height:0 !important}"
 
 let scrollbarScript = WKUserScript(source: """
     (function(){var s=document.createElement('style');s.textContent='\(hideScrollbarsCSS)';
