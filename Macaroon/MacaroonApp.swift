@@ -750,6 +750,16 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         config.networkDevices = [network]
         config.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
 
+        // Sound, as VirtualBuddy does: one virtio sound device with the host's speakers as output and its
+        // microphone as input (macOS asks for microphone permission the first time a guest records)
+        let sound = VZVirtioSoundDeviceConfiguration()
+        let speaker = VZVirtioSoundDeviceOutputStreamConfiguration()
+        speaker.sink = VZHostAudioOutputStreamSink()
+        let microphone = VZVirtioSoundDeviceInputStreamConfiguration()
+        microphone.source = VZHostAudioInputStreamSource()
+        sound.streams = [speaker, microphone]
+        config.audioDevices = [sound]
+
         // Apps dropped on the window land here; macOS guests auto-mount it at /Volumes/My Shared Files,
         // Linux guests can mount it with: mount -t virtiofs com.apple.virtio-fs.automount /mnt
         let share = VZVirtioFileSystemDeviceConfiguration(tag: VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag)
