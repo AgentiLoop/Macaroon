@@ -343,10 +343,22 @@ final class Tile: NSView {
         }
     }
 
+    /// The real NeXT logo in colour (NeXT_logo.svg in the app's Resources), centred in the tile with a margin;
+    /// falls back to the drawn black-and-grey cube if the file is missing.
+    func drawCube() {
+        if let url = Bundle.main.url(forResource: "NeXT_logo", withExtension: "svg"), let logo = NSImage(contentsOf: url) {
+            let area = bounds.insetBy(dx: 5, dy: 5), scale = min(area.width / logo.size.width, area.height / logo.size.height)
+            let size = NSSize(width: logo.size.width * scale, height: logo.size.height * scale)
+            logo.draw(in: NSRect(x: area.midX - size.width / 2, y: area.midY - size.height / 2, width: size.width, height: size.height))
+            return
+        }
+        drawGreyCube()
+    }
+
     /// The NeXT cube logo in black, white and grey: a black cube tilted 28°, its front face toward you with
     /// "Ne" over "XT" all on that one face (each letter its own grey, where the original has four colours),
     /// narrow side and bottom faces showing, white edges and a hard drop shadow like the other tiles.
-    func drawCube() {
+    private func drawGreyCube() {
         let a: CGFloat = 15, d: CGFloat = 7 // half the front face, depth of the side faces
         NSGraphicsContext.saveGraphicsState()
         let tilt = NSAffineTransform()

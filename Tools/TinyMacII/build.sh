@@ -14,7 +14,9 @@ textDocuments='<key>CFBundleDocumentTypes</key><array><dict><key>CFBundleTypeNam
 build() {
     local app="$shared/$2.app"
     rm -rf "$app"
-    mkdir -p "$app/Contents/MacOS"
+    mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+    # NeXT Workspace's Dock tile (and its app icon) is the colour NeXT logo
+    [ "$4" = com.macaroon.NeXTWorkspace ] && cp "$here/NeXT_logo.svg" "$app/Contents/Resources/"
     if [ "${6:-}" = kit ]; then
         local tmp=$(mktemp -d)
         cp "$here/$1" "$tmp/main.swift"
