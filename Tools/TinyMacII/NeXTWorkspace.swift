@@ -682,6 +682,19 @@ final class PathView: NSView {
     }
 }
 
+/// Browser rows draw their text at the top of the row; centre it vertically so it lines up with the arrows.
+final class CenteredBrowserCell: NSTextFieldCell {
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        var r = super.titleRect(forBounds: rect)
+        let h = attributedStringValue.size().height
+        if h < r.height { r.origin.y += floor((r.height - h) / 2); r.size.height = h }
+        return r
+    }
+    override func drawInterior(withFrame frame: NSRect, in view: NSView) {
+        super.drawInterior(withFrame: titleRect(forBounds: frame), in: view)
+    }
+}
+
 final class FileViewer: NSObject, NSWindowDelegate, NSBrowserDelegate {
     static var viewers: [FileViewer] = []
     static var current: FileViewer? { viewers.first { $0.window.isKeyWindow } ?? viewers.last }
@@ -716,6 +729,7 @@ final class FileViewer: NSObject, NSWindowDelegate, NSBrowserDelegate {
         shelf.go = { [weak self] in self?.go($0) }
         pathView.go = { [weak self] in self?.go($0) }
 
+        browser.setCellClass(CenteredBrowserCell.self)
         browser.delegate = self
         browser.target = self
         browser.action = #selector(selectionChanged)
