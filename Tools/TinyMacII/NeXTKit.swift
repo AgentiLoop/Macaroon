@@ -114,7 +114,8 @@ final class NeXTWindow: NSWindow {
     override var title: String { didSet { titleBar.needsDisplay = true } }
     override func becomeKey() { super.becomeKey(); titleBar.needsDisplay = true }
     override func resignKey() { super.resignKey(); titleBar.needsDisplay = true }
-    override func performClose(_ sender: Any?) { close() }
+    /// Asks the delegate first (NeXT Edit's "save changes?"), then closes.
+    override func performClose(_ sender: Any?) { if delegate?.windowShouldClose?(self) ?? true { close() } }
     /// A borderless window isn't made key by a click when its app was opened in the background (from NeXT
     /// Workspace's Dock, which never activates itself), so typing went nowhere. Take the click as activation.
     override func sendEvent(_ event: NSEvent) {

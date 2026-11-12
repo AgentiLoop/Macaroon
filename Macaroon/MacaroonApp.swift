@@ -154,7 +154,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
         install_app "$src" "$HOME/Applications/NeXT Workspace.app" com.macaroon.NeXTWorkspace
         # NeXT apps replace their macOS counterparts in the Dock (also in a Dock saved by an earlier run)
-        for pair in "NeXT Calculator:/System/Applications/Calculator.app" "NeXT Browser:/Applications/Safari.app" "NeXT Edit:/System/Applications/TextEdit.app"; do
+        for pair in "NeXT Calculator:/System/Applications/Calculator.app" "NeXT Browser:/Applications/Safari.app" "NeXT Edit:/System/Applications/TextEdit.app" "NeXT Terminal:/System/Applications/Utilities/Terminal.app"; do
             name=${pair%%:*} old=${pair#*:}
             [ -d "/Volumes/My Shared Files/$name.app" ] || continue
             install_app "/Volumes/My Shared Files/$name.app" "$HOME/Applications/$name.app" "com.macaroon.${name// /}"
