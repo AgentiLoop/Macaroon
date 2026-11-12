@@ -133,7 +133,7 @@ func axString(_ e: AXUIElement, _ attribute: String) -> String? { axValue(e, att
 // MARK: Dock
 
 enum DockApps {
-    static let standard = ["/System/Library/CoreServices/Finder.app", "/Applications/Safari.app", "/System/Applications/Mail.app",
+    static let standard = ["/System/Library/CoreServices/Finder.app", NSHomeDirectory() + "/Applications/NeXT Browser.app", "/System/Applications/Mail.app",
                            "/System/Applications/TextEdit.app", "/System/Applications/Utilities/Terminal.app",
                            NSHomeDirectory() + "/Applications/NeXT Calculator.app", "/System/Applications/System Settings.app"]
     static var paths: [String] {
@@ -183,7 +183,7 @@ enum NeXTIcons {
         r = area
         switch Bundle(path: path)?.bundleIdentifier {
         case "com.apple.finder": drawNeXTIcon(NSHomeDirectory(), in: area)
-        case "com.apple.Safari": globe()
+        case "com.apple.Safari", "com.macaroon.NeXTBrowser": globe()
         case "com.apple.mail": mail()
         case "com.apple.TextEdit": edit()
         case "com.apple.Terminal": terminal()

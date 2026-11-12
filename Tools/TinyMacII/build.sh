@@ -1,6 +1,6 @@
 #!/bin/zsh
-# Builds "NeXT Workspace.app" (NeXTSTEP Dock + vertical main menu for TinyMacII) and "NeXT Calculator.app" into
-# Macaroon's shared folder, where "Set Up NeXT Look.command" installs them inside the VM from /Volumes/My Shared Files.
+# Builds "NeXT Workspace.app" (NeXTSTEP Dock + vertical main menu for TinyMacII), "NeXT Calculator.app" and
+# "NeXT Browser.app" into Macaroon's shared folder, where "Set Up NeXT Look.command" installs them inside the VM from /Volumes/My Shared Files.
 set -euo pipefail
 here=${0:A:h}
 shared="$HOME/Library/Application Support/Macaroon/VM/Shared"
@@ -34,3 +34,4 @@ EOF
 
 build NeXTWorkspace.swift "NeXT Workspace" NeXTWorkspace com.macaroon.NeXTWorkspace true
 build NeXTCalculator.swift "NeXT Calculator" NeXTCalculator com.macaroon.NeXTCalculator false
+build NeXTBrowser.swift "NeXT Browser" NeXTBrowser com.macaroon.NeXTBrowser false
