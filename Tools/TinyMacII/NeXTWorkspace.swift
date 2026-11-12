@@ -1088,6 +1088,7 @@ final class BrowserColumn: NSView, NSDraggingSource {
     init(items: [String]) {
         self.items = items
         super.init(frame: .zero)
+        clipsToBounds = true // macOS 14+ doesn't clip by default: a part-scrolled top row drew over the scroller above
     }
     required init?(coder: NSCoder) { fatalError() }
 
