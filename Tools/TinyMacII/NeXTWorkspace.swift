@@ -1466,6 +1466,11 @@ final class Inspector {
 }
 
 let application = NSApplication.shared
+// Only one Workspace: a copy started by the LaunchAgent and one from a relaunch (open -n) would each show a
+// main menu and a Dock. The newest wins (it has the fresh Accessibility grant); a normal quit exits 0, so
+// the LaunchAgent doesn't restart the old one.
+for other in NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+where other != .current { other.terminate() }
 application.setActivationPolicy(.accessory)
 _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
 let dock = Dock()
