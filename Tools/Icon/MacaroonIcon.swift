@@ -1,6 +1,6 @@
 // Draws Macaroon's app icon: four quadrants, one per guest it runs: Mac (a classic compact Mac), Windows (four
 // panes), Linux (Tux, from Tux.svg next to this file: Larry Ewing's Tux, lewing@isc.tamu.edu, made with The GIMP;
-// Wikimedia Commons Tux.svg) and NeXT (the black cube).
+// Wikimedia Commons Tux.svg) and NeXT (the NeXT logo, NeXT_logo.svg next to this file).
 // Usage: swift MacaroonIcon.swift <out.png>   (1024×1024, Apple's macOS icon grid: 824-pixel rounded square)
 import AppKit
 
@@ -28,7 +28,7 @@ shape.addClip()
 let half: CGFloat = 412
 let mac = NSRect(x: 100, y: 512, width: half, height: half), win = NSRect(x: 512, y: 512, width: half, height: half)
 let linux = NSRect(x: 100, y: 100, width: half, height: half), next = NSRect(x: 512, y: 100, width: half, height: half)
-for (r, top, bottom) in [(mac, 0xF3EBDD, 0xDCCDB3), (win, 0x2D8CEB, 0x0F5AB4), (linux, 0xFFD34E, 0xF0A020), (next, 0x3A3A3A, 0x0E0E0E)] {
+for (r, top, bottom) in [(mac, 0xF3EBDD, 0xDCCDB3), (win, 0x2D8CEB, 0x0F5AB4), (linux, 0xFFD34E, 0xF0A020), (next, 0x6E6E6E, 0x3E3E3E)] {
     NSGradient(starting: c(top), ending: c(bottom))!.draw(in: r, angle: -90)
 }
 NSGraphicsContext.restoreGraphicsState()
@@ -67,23 +67,12 @@ do {
     tux.draw(in: NSRect(x: linux.midX - w / 2, y: linux.midY - h / 2, width: w, height: h))
 }
 
-// NeXT: the black cube, tilted, with "NeXT" on its front face (bottom right)
+// NeXT: the real NeXT logo (bottom right), from NeXT_logo.svg next to this file
 do {
-    NSGraphicsContext.saveGraphicsState()
-    let t = NSAffineTransform(); t.translateX(by: next.midX + 14, yBy: next.midY + 14); t.rotate(byDegrees: 28); t.concat()
-    let a: CGFloat = 92, d: CGFloat = 40
-    func poly(_ p: [NSPoint]) -> NSBezierPath { let b = NSBezierPath(); b.move(to: p[0]); p.dropFirst().forEach { b.line(to: $0) }; b.close(); return b }
-    let front = poly([NSPoint(x: -a, y: -a), NSPoint(x: a, y: -a), NSPoint(x: a, y: a), NSPoint(x: -a, y: a)])
-    let side = poly([NSPoint(x: -a, y: a), NSPoint(x: -a - d, y: a - d), NSPoint(x: -a - d, y: -a - d), NSPoint(x: -a, y: -a)])
-    let bottom = poly([NSPoint(x: -a, y: -a), NSPoint(x: -a - d, y: -a - d), NSPoint(x: a - d, y: -a - d), NSPoint(x: a, y: -a)])
-    for (p, g) in [(side, 0x050505), (bottom, 0x050505), (front, 0x111111)] {
-        c(g).setFill(); p.fill(); c(0x8A8A8A).setStroke(); p.lineWidth = 3; p.stroke()
-    }
-    let font = NSFont(name: "Helvetica-Bold", size: 86) ?? .boldSystemFont(ofSize: 86)
-    for (text, x, y, colour) in [("N", -76, 0, 0xE8E8E8), ("e", 6, 0, 0xB0B0B0), ("X", -76, -86, 0x9A9A9A), ("T", 6, -86, 0xD0D0D0)] {
-        (text as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: [.font: font, .foregroundColor: c(colour)])
-    }
-    NSGraphicsContext.restoreGraphicsState()
+    let svg = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("NeXT_logo.svg")
+    guard let logo = NSImage(contentsOf: svg) else { fatalError("NeXT_logo.svg missing next to MacaroonIcon.swift") }
+    let h: CGFloat = 310, w = h * logo.size.width / logo.size.height
+    logo.draw(in: NSRect(x: next.midX - w / 2, y: next.midY - h / 2, width: w, height: h))
 }
 
 // Thin rim
