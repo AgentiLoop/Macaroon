@@ -337,19 +337,56 @@ final class Tile: NSView {
     }
 
     /// A shaded cube, the Workspace's own tile.
+    /// The NeXT cube: a black cube tilted 28° onto one corner, "Ne" over "XT" set across its two front faces
+    /// in light grey (matching the all-grey Dock), black outline and a hard drop shadow like the other tiles.
     private func drawCube() {
-        let c = NSPoint(x: bounds.midX, y: bounds.midY), s: CGFloat = 20
-        func face(_ points: [NSPoint], _ white: CGFloat) {
-            let path = NSBezierPath()
-            path.move(to: points[0])
-            points.dropFirst().forEach { path.line(to: $0) }
-            path.close()
-            NSColor(calibratedWhite: white, alpha: 1).setFill()
-            path.fill()
+        let s: CGFloat = 16
+        NSGraphicsContext.saveGraphicsState()
+        let tilt = NSAffineTransform()
+        tilt.translateX(by: bounds.midX, yBy: bounds.midY)
+        tilt.rotate(byDegrees: 28)
+        tilt.concat()
+        // Faces around the origin: top, left front, right front
+        let top = [NSPoint(x: 0, y: s), NSPoint(x: s, y: s / 2), .zero, NSPoint(x: -s, y: s / 2)]
+        let left = [NSPoint(x: -s, y: s / 2), .zero, NSPoint(x: 0, y: -s), NSPoint(x: -s, y: -s / 2)]
+        let right = [NSPoint.zero, NSPoint(x: s, y: s / 2), NSPoint(x: s, y: -s / 2), NSPoint(x: 0, y: -s)]
+        func path(_ points: [NSPoint], dx: CGFloat = 0, dy: CGFloat = 0) -> NSBezierPath {
+            let p = NSBezierPath()
+            p.move(to: NSPoint(x: points[0].x + dx, y: points[0].y + dy))
+            points.dropFirst().forEach { p.line(to: NSPoint(x: $0.x + dx, y: $0.y + dy)) }
+            p.close()
+            return p
         }
-        face([NSPoint(x: c.x, y: c.y + s), NSPoint(x: c.x + s, y: c.y + s / 2), c, NSPoint(x: c.x - s, y: c.y + s / 2)], 0.35)
-        face([NSPoint(x: c.x - s, y: c.y + s / 2), c, NSPoint(x: c.x, y: c.y - s), NSPoint(x: c.x - s, y: c.y - s / 2)], 0.05)
-        face([c, NSPoint(x: c.x + s, y: c.y + s / 2), NSPoint(x: c.x + s, y: c.y - s / 2), NSPoint(x: c.x, y: c.y - s)], 0.2)
+        NSColor(calibratedWhite: 0.15, alpha: 1).setFill() // shadow, down and right
+        for face in [top, left, right] { path(face, dx: 2, dy: -2).fill() }
+        for (face, white) in [(top, 0.3), (left, 0.08), (right, 0.18)] as [([NSPoint], CGFloat)] {
+            let p = path(face)
+            NSColor(calibratedWhite: white, alpha: 1).setFill()
+            p.fill()
+            NSColor.black.setStroke()
+            p.lineWidth = 1
+            p.stroke()
+        }
+        // Letters: "Ne" on the upper row, "XT" on the lower, each half sheared onto its face
+        let letters = NSFont(name: "Helvetica-Bold", size: 46) ?? .boldSystemFont(ofSize: 46)
+        let attributes: [NSAttributedString.Key: Any] = [.font: letters, .foregroundColor: NSColor(calibratedWhite: 0.82, alpha: 1)]
+        func onFace(_ origin: NSPoint, _ xAxis: NSPoint, _ draw: () -> Void) {
+            NSGraphicsContext.saveGraphicsState()
+            let t = NSAffineTransform()
+            t.transformStruct = NSAffineTransformStruct(m11: xAxis.x / 100, m12: xAxis.y / 100, m21: 0, m22: s / 100, tX: origin.x, tY: origin.y)
+            t.concat()
+            draw()
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        onFace(NSPoint(x: -s, y: -s / 2), NSPoint(x: s, y: -s / 2)) { // left face: N and X
+            ("N" as NSString).draw(at: NSPoint(x: 22, y: 48), withAttributes: attributes)
+            ("X" as NSString).draw(at: NSPoint(x: 22, y: 2), withAttributes: attributes)
+        }
+        onFace(NSPoint(x: 0, y: -s), NSPoint(x: s, y: s / 2)) { // right face: e and T
+            ("e" as NSString).draw(at: NSPoint(x: 6, y: 48), withAttributes: attributes)
+            ("T" as NSString).draw(at: NSPoint(x: 6, y: 2), withAttributes: attributes)
+        }
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     override func mouseDown(with event: NSEvent) {
