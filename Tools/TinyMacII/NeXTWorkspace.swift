@@ -624,8 +624,13 @@ enum MenuLevel {
 }
 
 /// One menu column. Submenus open as attached columns to the right; dragging one tears it off.
+/// As on NeXTSTEP, a torn-off menu stays until its close box is clicked: it belongs to its app, hides while
+/// another app is active and comes back when its app is active again; it goes away when the app quits.
 final class MenuColumn {
     static var tornOff: [MenuColumn] = []
+    /// The app whose menus are showing (its process id); a menu torn off now belongs to it.
+    static var activeOwner = getpid()
+    var owner = getpid()
     let panel = makePanel()
     let isMain: Bool
     var title: String
@@ -722,6 +727,7 @@ final class MenuColumn {
     private func moved() {
         if !isMain, !torn {
             torn = true
+            owner = MenuColumn.activeOwner
             sourceRow?.highlighted = false
             if parent?.child === self { parent?.child = nil }
             parent = nil
@@ -769,6 +775,10 @@ final class MainMenu {
             self?.app = app
             self?.reload()
         }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+            for torn in MenuColumn.tornOff where torn.owner == app.processIdentifier { torn.close() } // its app quit
+        }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.app = .current
             self?.reload()
@@ -783,7 +793,12 @@ final class MainMenu {
 
     func reload() {
         column.closeChild()
-        for torn in MenuColumn.tornOff { torn.close() } // they belong to the previous app
+        // Torn-off menus: the previous app's hide, this app's come back
+        let owner = app?.processIdentifier ?? getpid()
+        MenuColumn.activeOwner = owner
+        for torn in MenuColumn.tornOff {
+            if torn.owner == owner { torn.panel.orderFrontRegardless() } else { torn.closeChild(); torn.panel.orderOut(nil) }
+        }
         guard let app, app != .current else {
             column.title = "Workspace"
             return column.build(Self.workspaceEntries)
