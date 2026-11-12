@@ -480,6 +480,9 @@ final class Row: NSView {
     let enabled: Bool
     var highlighted = false { didSet { needsDisplay = true } }
     var closeBox = false { didSet { needsDisplay = true } }
+    /// The main menu's level toggle in the top right of its title: filled = floats above apps, hollow = among them.
+    var levelToggle = false { didSet { needsDisplay = true } }
+    var toggleLevel: () -> Void = {}
     var action: (Row) -> Void = { _ in }
     var moved: () -> Void = {}
     var close: () -> Void = {}
@@ -508,6 +511,12 @@ final class Row: NSView {
                 NSColor.black.setStroke()
                 x.lineWidth = 1.5
                 x.stroke()
+            }
+            if levelToggle {
+                bevel(closeBoxRect)
+                let mark = NSBezierPath(rect: closeBoxRect.insetBy(dx: 4.5, dy: 4.5))
+                NSColor.black.set()
+                if MenuLevel.floating { mark.fill() } else { mark.stroke() }
             }
             return
         }
@@ -540,7 +549,10 @@ final class Row: NSView {
             if enabled { action(self) }
             return
         }
-        if closeBox, closeBoxRect.contains(convert(event.locationInWindow, from: nil)) { return close() }
+        window?.orderFrontRegardless() // among app windows, a click brings the menu forward
+        let inBox = closeBoxRect.contains(convert(event.locationInWindow, from: nil))
+        if closeBox, inBox { return close() }
+        if levelToggle, inBox { return toggleLevel() }
         // Drag the column by its title
         guard let window else { return }
         let start = NSEvent.mouseLocation, origin = window.frame.origin
@@ -553,6 +565,16 @@ final class Row: NSView {
         }
         if didMove { moved() }
     }
+}
+
+/// Where the main menu and its attached submenus sit: floating above app windows (the default, like NeXTSTEP)
+/// or on the same level as apps. Torn-off menus always float. Saved between launches.
+enum MenuLevel {
+    static var floating: Bool {
+        get { UserDefaults.standard.object(forKey: "MenuFloats") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "MenuFloats") }
+    }
+    static var level: NSWindow.Level { floating ? .floating : .normal }
 }
 
 /// One menu column. Submenus open as attached columns to the right; dragging one tears it off.
@@ -570,6 +592,7 @@ final class MenuColumn {
     init(title: String, isMain: Bool = false) {
         self.title = title
         self.isMain = isMain
+        if isMain { panel.level = MenuLevel.level }
     }
 
     func build(_ entries: [Entry]) {
@@ -577,6 +600,13 @@ final class MenuColumn {
         header.closeBox = torn
         header.moved = { [weak self] in self?.moved() }
         header.close = { [weak self] in self?.close() }
+        header.levelToggle = isMain
+        header.toggleLevel = { [weak self] in
+            MenuLevel.floating.toggle()
+            var column = self
+            while let c = column { c.panel.level = MenuLevel.level; c.panel.orderFrontRegardless(); column = c.child }
+            header.needsDisplay = true
+        }
         rows = [header]
         for entry in entries {
             switch entry.kind {
