@@ -1,0 +1,5 @@
+[Default Applications]
+text/plain=simpletext.desktop
+text/html=internet.desktop
+x-scheme-handler/http=internet.desktop
+x-scheme-handler/https=internet.desktop

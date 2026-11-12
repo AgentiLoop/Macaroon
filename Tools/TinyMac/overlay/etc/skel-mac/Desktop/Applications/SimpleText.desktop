@@ -1,5 +1,5 @@
 [Desktop Entry]
 Type=Application
 Name=SimpleText
-Exec=nedit
+Exec=simpletext %f
 Icon=accessories-text-editor

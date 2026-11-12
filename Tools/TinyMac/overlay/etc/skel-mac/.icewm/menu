@@ -3,7 +3,8 @@ prog "Finder" folder pcmanfm /home/mac
 prog "Shared Folder" folder-remote pcmanfm /home/mac/Shared
 prog "Trash" user-trash pcmanfm trash:///
 separator
-prog "SimpleText" accessories-text-editor nedit
+prog "SimpleText" accessories-text-editor simpletext
+prog "Internet" web-browser internet
 prog "Terminal" utilities-terminal xterm
 separator
 menu "Control Panels" preferences-desktop {

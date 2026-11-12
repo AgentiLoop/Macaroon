@@ -1,0 +1,254 @@
+#!/usr/bin/python3
+# SimpleText for TinyMac: a plain text editor with Mac OS 8 SimpleText's menus (File, Edit, Font, Size, Style).
+# Font, Size and Style apply to the whole window, as in an unstyled SimpleText document. Shortcuts: Cmd or Ctrl.
+import os, sys
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, Gdk, Pango
+
+FONTS = ["DejaVu Sans", "DejaVu Serif", "DejaVu Sans Mono"]
+SIZES = [9, 10, 12, 14, 18, 24, 36]
+windows = []
+
+
+class Document(Gtk.Window):
+    def __init__(self, path=None):
+        super().__init__(title="untitled")
+        self.path, self.font, self.size, self.bold, self.italic, self.underline = None, "DejaVu Sans", 12, False, False, False
+        self.set_default_size(560, 420)
+        self.accel = Gtk.AccelGroup()
+        self.add_accel_group(self.accel)
+        self.buffer = Gtk.TextBuffer()
+        self.buffer.connect("modified-changed", lambda *_: self.update_title())
+        self.view = Gtk.TextView(buffer=self.buffer, wrap_mode=Gtk.WrapMode.WORD, left_margin=6, right_margin=6, top_margin=4)
+        self.tag = self.buffer.create_tag("doc")
+        self.buffer.connect("changed", lambda *_: self.buffer.apply_tag(self.tag, *self.buffer.get_bounds()))
+
+        bar = Gtk.MenuBar()
+        bar.append(self.menu("File", [
+            ("New", "n", lambda: open_window()), ("Open…", "o", self.open), ("Close", "w", self.close_doc), None,
+            ("Save", "s", self.save), ("Save As…", None, self.save_as), None,
+            ("Print…", "p", self.print_doc), None, ("Quit", "q", quit_all)]))
+        bar.append(self.menu("Edit", [
+            ("Undo", "z", None), None,
+            ("Cut", "x", lambda: self.buffer.cut_clipboard(self.clipboard(), True)),
+            ("Copy", "c", lambda: self.buffer.copy_clipboard(self.clipboard())),
+            ("Paste", "v", lambda: self.buffer.paste_clipboard(self.clipboard(), None, True)),
+            ("Clear", None, lambda: self.buffer.delete_selection(True, True)),
+            ("Select All", "a", lambda: self.buffer.select_range(*self.buffer.get_bounds())), None,
+            ("Find…", "f", self.find), ("Find Again", "g", self.find_again)]))
+        self.radio_menu(bar, "Font", FONTS, self.font, lambda f: self.set_style(font=f))
+        self.radio_menu(bar, "Size", [f"{s} Point" for s in SIZES], "12 Point", lambda s: self.set_style(size=int(s.split()[0])))
+        style = Gtk.Menu()
+        plain = Gtk.MenuItem(label="Plain Text")
+        plain.connect("activate", lambda *_: self.set_style(bold=False, italic=False, underline=False))
+        self.add_key(plain, "t")
+        style.append(plain)
+        style.append(Gtk.SeparatorMenuItem())
+        self.style_items = {}
+        for name, key in (("Bold", "b"), ("Italic", "i"), ("Underline", "u")):
+            item = Gtk.CheckMenuItem(label=name)
+            item.connect("toggled", lambda i, n=name.lower(): self.toggling or self.set_style(**{n: i.get_active()}))
+            self.add_key(item, key)
+            style.append(item)
+            self.style_items[name.lower()] = item
+        top = Gtk.MenuItem(label="Style")
+        top.set_submenu(style)
+        bar.append(top)
+        self.toggling = False
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.add(self.view)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.pack_start(bar, False, False, 0)
+        box.pack_start(scroll, True, True, 0)
+        self.add(box)
+        self.connect("delete-event", lambda *_: not self.close_doc())
+        self.set_style()
+        if path:
+            self.load(path)
+        self.show_all()
+        self.view.grab_focus()
+
+    # Menus
+    def add_key(self, item, key):
+        for mod in (Gdk.ModifierType.CONTROL_MASK, Gdk.ModifierType.SUPER_MASK):  # Ctrl, and the Mac's Cmd key
+            item.add_accelerator("activate", self.accel, Gdk.keyval_from_name(key), mod, Gtk.AccelFlags.VISIBLE if mod == Gdk.ModifierType.CONTROL_MASK else 0)
+
+    def menu(self, title, entries):
+        menu = Gtk.Menu()
+        for entry in entries:
+            if entry is None:
+                menu.append(Gtk.SeparatorMenuItem())
+                continue
+            label, key, action = entry
+            item = Gtk.MenuItem(label=label)
+            if action:
+                item.connect("activate", lambda *_, a=action: a())
+            else:
+                item.set_sensitive(False)
+            if key:
+                self.add_key(item, key)
+            menu.append(item)
+        top = Gtk.MenuItem(label=title)
+        top.set_submenu(menu)
+        return top
+
+    def radio_menu(self, bar, title, names, current, action):
+        menu, group = Gtk.Menu(), None
+        for name in names:
+            item = Gtk.RadioMenuItem(label=name, group=group)
+            group = item
+            item.set_active(name == current)
+            item.connect("toggled", lambda i, n=name: i.get_active() and action(n))
+            menu.append(item)
+        top = Gtk.MenuItem(label=title)
+        top.set_submenu(menu)
+        bar.append(top)
+
+    def set_style(self, **change):
+        for key, value in change.items():
+            setattr(self, key, value)
+        self.tag.set_property("family", self.font)
+        self.tag.set_property("size-points", self.size)
+        self.tag.set_property("weight", Pango.Weight.BOLD if self.bold else Pango.Weight.NORMAL)
+        self.tag.set_property("style", Pango.Style.ITALIC if self.italic else Pango.Style.NORMAL)
+        self.tag.set_property("underline", Pango.Underline.SINGLE if self.underline else Pango.Underline.NONE)
+        self.buffer.apply_tag(self.tag, *self.buffer.get_bounds())
+        if hasattr(self, "style_items"):
+            self.toggling = True
+            for name, item in self.style_items.items():
+                item.set_active(getattr(self, name))
+            self.toggling = False
+
+    def clipboard(self):
+        return Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+
+    # Files
+    def update_title(self):
+        name = os.path.basename(self.path) if self.path else "untitled"
+        self.set_title(("• " if self.buffer.get_modified() else "") + name)
+
+    def load(self, path):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                self.buffer.set_text(f.read())
+        except FileNotFoundError:
+            pass
+        self.path = os.path.abspath(path)
+        self.buffer.set_modified(False)
+        self.buffer.place_cursor(self.buffer.get_start_iter())
+        self.update_title()
+
+    def chooser(self, title, action, button):
+        dialog = Gtk.FileChooserDialog(title=title, parent=self, action=action)
+        dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL, button, Gtk.ResponseType.OK)
+        dialog.set_current_folder(os.path.dirname(self.path) if self.path else os.path.expanduser("~/Desktop"))
+        if action == Gtk.FileChooserAction.SAVE:
+            dialog.set_do_overwrite_confirmation(True)
+            dialog.set_current_name(os.path.basename(self.path) if self.path else "untitled")
+        path = dialog.get_filename() if dialog.run() == Gtk.ResponseType.OK else None
+        dialog.destroy()
+        return path
+
+    def open(self):
+        path = self.chooser("Open", Gtk.FileChooserAction.OPEN, "Open")
+        if not path:
+            return
+        if self.path is None and not self.buffer.get_modified():
+            self.load(path)
+        else:
+            open_window(path)
+
+    def save(self):
+        if not self.path:
+            return self.save_as()
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(self.buffer.get_text(*self.buffer.get_bounds(), True))
+        self.buffer.set_modified(False)
+        return True
+
+    def save_as(self):
+        path = self.chooser("Save As", Gtk.FileChooserAction.SAVE, "Save")
+        if not path:
+            return False
+        self.path = path
+        return self.save()
+
+    def close_doc(self):
+        """Closes the window, asking to save changes first, like SimpleText. Returns False if cancelled."""
+        if self.buffer.get_modified():
+            name = os.path.basename(self.path) if self.path else "untitled"
+            dialog = Gtk.MessageDialog(parent=self, message_type=Gtk.MessageType.WARNING,
+                                       text=f"Save changes to the document “{name}” before closing?")
+            dialog.add_buttons("Don’t Save", 1, "Cancel", Gtk.ResponseType.CANCEL, "Save", Gtk.ResponseType.OK)
+            answer = dialog.run()
+            dialog.destroy()
+            if answer == Gtk.ResponseType.CANCEL or (answer == Gtk.ResponseType.OK and not self.save()):
+                return False
+        windows.remove(self)
+        self.destroy()
+        if not windows:
+            Gtk.main_quit()
+        return True
+
+    def print_doc(self):
+        op = Gtk.PrintOperation(n_pages=1)
+        text = self.buffer.get_text(*self.buffer.get_bounds(), True)
+
+        def draw(op, context, page):
+            layout = context.create_pango_layout()
+            layout.set_text(text, -1)
+            layout.set_font_description(Pango.FontDescription(f"{self.font} {self.size}"))
+            layout.set_width(int(context.get_width() * Pango.SCALE))
+            from gi.repository import PangoCairo
+            PangoCairo.show_layout(context.get_cairo_context(), layout)
+        op.connect("draw-page", draw)
+        op.run(Gtk.PrintOperationAction.PRINT_DIALOG, self)
+
+    # Find
+    last_find = ""
+
+    def find(self):
+        dialog = Gtk.Dialog(title="Find", parent=self)
+        dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Find", Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.OK)
+        entry = Gtk.Entry(text=Document.last_find, activates_default=True)
+        box = dialog.get_content_area()
+        box.set_spacing(6)
+        box.add(Gtk.Label(label="Find what?", xalign=0))
+        box.add(entry)
+        dialog.show_all()
+        if dialog.run() == Gtk.ResponseType.OK:
+            Document.last_find = entry.get_text()
+            dialog.destroy()
+            self.find_again()
+        else:
+            dialog.destroy()
+
+    def find_again(self):
+        if not Document.last_find:
+            return self.find()
+        start = self.buffer.get_iter_at_mark(self.buffer.get_selection_bound())
+        flags = Gtk.TextSearchFlags.CASE_INSENSITIVE
+        found = start.forward_search(Document.last_find, flags, None) or self.buffer.get_start_iter().forward_search(Document.last_find, flags, None)
+        if found:
+            self.buffer.select_range(*found)
+            self.view.scroll_to_iter(found[0], 0.2, False, 0, 0)
+        else:
+            Gdk.beep()
+
+
+def open_window(path=None):
+    windows.append(Document(path))
+
+
+def quit_all():
+    for window in list(windows):
+        if not window.close_doc():
+            return
+
+
+for arg in sys.argv[1:] or [None]:
+    open_window(arg)
+Gtk.main()
