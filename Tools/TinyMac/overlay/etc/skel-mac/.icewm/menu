@@ -1,9 +1,11 @@
 # The Macaroon menu (top left), like the Apple menu.
-prog "Finder" - xfe /home/mac
-prog "Shared Folder" - xfe /home/mac/Shared
-prog "SimpleText" - nedit
-prog "Terminal" - xterm
+prog "Finder" folder pcmanfm /home/mac
+prog "Shared Folder" folder-remote pcmanfm /home/mac/Shared
+prog "Trash" user-trash pcmanfm trash:///
 separator
-menu "Control Panels" - {
-    prog "Appearance" - xterm -e vi /home/mac/.icewm/preferences
+prog "SimpleText" accessories-text-editor nedit
+prog "Terminal" utilities-terminal xterm
+separator
+menu "Control Panels" preferences-desktop {
+    prog "Appearance" preferences-desktop-theme xterm -e vi /home/mac/.icewm/preferences
 }

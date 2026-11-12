@@ -20,7 +20,8 @@ cp -R /etc/apk/keys "$root/etc/apk/"
 apk add -q --root "$root" --initdb --no-cache \
     alpine-base linux-virt eudev doas \
     xorg-server xf86-input-libinput xinit xsetroot \
-    icewm xterm xfe nedit xrdb font-dejavu spice-vdagent
+    icewm xterm nedit xrdb font-dejavu spice-vdagent \
+    pcmanfm gvfs dbus adwaita-icon-theme
 
 # Our files: theme, session, config.
 cp -R "$src/overlay/." "$root/"
@@ -30,8 +31,10 @@ chroot "$root" /bin/sh -eu <<'EOF'
 adduser -D -s /bin/sh -G users mac
 addgroup mac video; addgroup mac input; addgroup mac audio
 passwd -d mac >/dev/null; passwd -d root >/dev/null
-cp -R /etc/skel-mac/. /home/mac/ && chown -R mac:users /home/mac && rm -rf /etc/skel-mac
-mkdir -p /home/mac/Shared && chown mac:users /home/mac/Shared
+cp -R /etc/skel-mac/. /home/mac/ && rm -rf /etc/skel-mac
+mkdir -p /home/mac/Shared /home/mac/.local/share/Trash/files /home/mac/.local/share/Trash/info
+ln -s /home/mac/Shared "/home/mac/Desktop/Shared Folder"
+chown -R mac:users /home/mac
 for s in devfs dmesg udev udev-trigger udev-settle; do rc-update add $s sysinit; done
 for s in modules sysctl hostname bootmisc syslog networking; do rc-update add $s boot; done
 for s in udev-postmount localmount spice-vdagentd; do rc-update add $s default; done

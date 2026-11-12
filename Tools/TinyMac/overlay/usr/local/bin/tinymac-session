@@ -1,7 +1,10 @@
 #!/bin/sh
-# The Platinum desktop: IceWM with the menu bar at the top, Mac-style clipboard sharing through spice-vdagent.
+# The Platinum desktop: IceWM's task bar is the menu bar at the top, pcmanfm draws the desktop
+# (folders, files, Trash). One D-Bus session so the desktop and Finder windows share the Trash (gvfs).
+[ -z "$DBUS_SESSION_BUS_ADDRESS" ] && exec dbus-run-session -- "$0"
 export DISPLAY=:0
 xsetroot -solid '#666699' -cursor_name left_ptr
 xrdb -merge $HOME/.Xresources
 spice-vdagent >/dev/null 2>&1
-exec icewm-session
+pcmanfm --desktop &
+exec icewm
