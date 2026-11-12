@@ -71,7 +71,7 @@ do {
 do {
     let svg = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("NeXT_logo.svg")
     guard let logo = NSImage(contentsOf: svg) else { fatalError("NeXT_logo.svg missing next to MacaroonIcon.swift") }
-    let h: CGFloat = 310, w = h * logo.size.width / logo.size.height
+    let h: CGFloat = 400, w = h * logo.size.width / logo.size.height
     logo.draw(in: NSRect(x: next.midX - w / 2, y: next.midY - h / 2, width: w, height: h))
 }
 
