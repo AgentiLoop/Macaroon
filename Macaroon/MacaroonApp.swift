@@ -139,6 +139,32 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     # Home folder as a Dock tile, like NeXT's file viewer tile (added once)
     defaults read com.apple.dock persistent-others 2>/dev/null | grep -q "file://$HOME/\"" || defaults write com.apple.dock persistent-others -array-add \
         "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>file://$HOME/</string><key>_CFURLStringType</key><integer>15</integer></dict><key>file-label</key><string>Home</string><key>displayas</key><integer>1</integer><key>showas</key><integer>2</integer><key>arrangement</key><integer>1</integer></dict><key>tile-type</key><string>directory-tile</string></dict>"
+    # NeXT Workspace (Tools/TinyMacII): NeXTSTEP's tile Dock on the right and its vertical main menu at the top
+    # left, started at every login. It replaces the macOS Dock, which is pushed out of the way.
+    src="/Volumes/My Shared Files/NeXT Workspace.app"
+    if [ -d "$src" ]; then
+        mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
+        rm -rf "$HOME/Applications/NeXT Workspace.app"
+        ditto "$src" "$HOME/Applications/NeXT Workspace.app"
+        agent="$HOME/Library/LaunchAgents/com.macaroon.NeXTWorkspace.plist"
+        cat > "$agent" <<EOF
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0"><dict>
+        <key>Label</key><string>com.macaroon.NeXTWorkspace</string>
+        <key>ProgramArguments</key><array><string>$HOME/Applications/NeXT Workspace.app/Contents/MacOS/NeXTWorkspace</string></array>
+        <key>RunAtLoad</key><true/>
+        <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+    </dict></plist>
+    EOF
+        launchctl bootout gui/$(id -u) "$agent" 2>/dev/null
+        launchctl bootstrap gui/$(id -u) "$agent"
+        defaults write com.apple.dock autohide -bool true
+        defaults write com.apple.dock autohide-delay -float 1000
+        echo "NeXT Workspace installed. Allow it in System Settings > Privacy & Security > Accessibility so its menu can show each app's menus."
+    else
+        echo "Skipped: NeXT Workspace.app is not in the Shared Folder (build it on the Mac with Tools/TinyMacII/build.sh)"
+    fi
     killall Dock SystemUIServer Finder 2>/dev/null
     echo "Done. Log out and back in for the dark appearance to reach every app."
     """#
