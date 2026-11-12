@@ -336,21 +336,20 @@ final class Tile: NSView {
         }
     }
 
-    /// A shaded cube, the Workspace's own tile.
-    /// The NeXT cube logo in black, white and grey: a black cube tilted 28° onto one corner, its edges picked out
-    /// in white, "Ne" over "XT" set across its two front faces with each letter in its own grey (where the
-    /// original has four colours), and a hard drop shadow like the other tiles.
+    /// The NeXT cube logo in black, white and grey: a black cube tilted 28°, its front face toward you with
+    /// "Ne" over "XT" all on that one face (each letter its own grey, where the original has four colours),
+    /// narrow side and bottom faces showing, white edges and a hard drop shadow like the other tiles.
     private func drawCube() {
-        let s: CGFloat = 18
+        let a: CGFloat = 15, d: CGFloat = 7 // half the front face, depth of the side faces
         NSGraphicsContext.saveGraphicsState()
         let tilt = NSAffineTransform()
         tilt.translateX(by: bounds.midX, yBy: bounds.midY)
         tilt.rotate(byDegrees: 28)
+        tilt.translateX(by: d / 2, yBy: d / 2)
         tilt.concat()
-        // Faces around the origin: top, left front, right front
-        let top = [NSPoint(x: 0, y: s), NSPoint(x: s, y: s / 2), .zero, NSPoint(x: -s, y: s / 2)]
-        let left = [NSPoint(x: -s, y: s / 2), .zero, NSPoint(x: 0, y: -s), NSPoint(x: -s, y: -s / 2)]
-        let right = [NSPoint.zero, NSPoint(x: s, y: s / 2), NSPoint(x: s, y: -s / 2), NSPoint(x: 0, y: -s)]
+        let front = [NSPoint(x: -a, y: -a), NSPoint(x: a, y: -a), NSPoint(x: a, y: a), NSPoint(x: -a, y: a)]
+        let side = [NSPoint(x: -a, y: a), NSPoint(x: -a - d, y: a - d), NSPoint(x: -a - d, y: -a - d), NSPoint(x: -a, y: -a)]
+        let bottom = [NSPoint(x: -a, y: -a), NSPoint(x: -a - d, y: -a - d), NSPoint(x: a - d, y: -a - d), NSPoint(x: a, y: -a)]
         func path(_ points: [NSPoint], dx: CGFloat = 0, dy: CGFloat = 0) -> NSBezierPath {
             let p = NSBezierPath()
             p.move(to: NSPoint(x: points[0].x + dx, y: points[0].y + dy))
@@ -358,9 +357,9 @@ final class Tile: NSView {
             p.close()
             return p
         }
-        NSColor(calibratedWhite: 0.25, alpha: 1).setFill() // shadow, down and right
-        for face in [top, left, right] { path(face, dx: 2, dy: -2).fill() }
-        for face in [top, left, right] { // all black, white edges like the logo's
+        NSColor(calibratedWhite: 0.25, alpha: 1).setFill() // shadow
+        for face in [side, bottom, front] { path(face, dx: 2, dy: -2).fill() }
+        for face in [side, bottom, front] { // all black, white edges like the logo's
             let p = path(face)
             NSColor.black.setFill()
             p.fill()
@@ -368,27 +367,15 @@ final class Tile: NSView {
             p.lineWidth = 0.75
             p.stroke()
         }
-        // Letters: "Ne" on the upper row, "XT" on the lower, each half sheared onto its face
-        let letters = NSFont(name: "Helvetica-Bold", size: 48) ?? .boldSystemFont(ofSize: 48)
-        func letter(_ text: String, _ at: NSPoint, _ white: CGFloat) {
-            (text as NSString).draw(at: at, withAttributes: [.font: letters, .foregroundColor: NSColor(calibratedWhite: white, alpha: 1)])
+        // "Ne" over "XT", all on the front face
+        let letters = NSFont(name: "Helvetica-Bold", size: 15) ?? .boldSystemFont(ofSize: 15)
+        func letter(_ text: String, _ x: CGFloat, _ y: CGFloat, _ white: CGFloat) {
+            (text as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: [.font: letters, .foregroundColor: NSColor(calibratedWhite: white, alpha: 1)])
         }
-        func onFace(_ origin: NSPoint, _ xAxis: NSPoint, _ draw: () -> Void) {
-            NSGraphicsContext.saveGraphicsState()
-            let t = NSAffineTransform()
-            t.transformStruct = NSAffineTransformStruct(m11: xAxis.x / 100, m12: xAxis.y / 100, m21: 0, m22: s / 100, tX: origin.x, tY: origin.y)
-            t.concat()
-            draw()
-            NSGraphicsContext.restoreGraphicsState()
-        }
-        onFace(NSPoint(x: -s, y: -s / 2), NSPoint(x: s, y: -s / 2)) { // left face: N and X
-            letter("N", NSPoint(x: 20, y: 47), 1)
-            letter("X", NSPoint(x: 20, y: 1), 0.6)
-        }
-        onFace(NSPoint(x: 0, y: -s), NSPoint(x: s, y: s / 2)) { // right face: e and T
-            letter("e", NSPoint(x: 6, y: 47), 0.8)
-            letter("T", NSPoint(x: 6, y: 1), 0.7)
-        }
+        letter("N", -13, 0, 1)
+        letter("e", 1, 0, 0.8)
+        letter("X", -13, -15, 0.6)
+        letter("T", 1, -15, 0.7)
         NSGraphicsContext.restoreGraphicsState()
     }
 
