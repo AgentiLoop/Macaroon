@@ -1473,7 +1473,7 @@ final class Inspector {
     }
 }
 
-// build.sh: `NeXTWorkspace --icon <bundle id> <file.png>` writes a 1024-pixel app icon, the Dock tile's drawing
+// build.sh: `NeXTWorkspace --icon <bundle id> <file.png>` writes a 1024-pixel app icon layer, the Dock tile's drawing on transparent (build.sh puts it on NeXT grey)
 // scaled up 16× (same lines and shadows), and exits. The Workspace's own icon is the NeXT cube.
 if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--icon" {
     let id = CommandLine.arguments[2]
