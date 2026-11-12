@@ -99,11 +99,13 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     #!/bin/zsh
     # TinyMacII: give macOS a NeXTSTEP look. Safe to run again.
     echo "Setting up the NeXT look…"
-    # The Dock: NeXT's was a column of 64-pt tiles on the right edge, always visible, no magnification.
-    defaults write com.apple.dock orientation -string right
+    # The macOS Dock: along the bottom, auto-hidden (point at the bottom edge to show it; Option-Command-D turns
+    # hiding on and off), 64-pt tiles, no magnification. NeXT Workspace's tile Dock stays on the right.
+    defaults write com.apple.dock orientation -string bottom
     defaults write com.apple.dock tilesize -int 64
     defaults write com.apple.dock magnification -bool false
-    defaults write com.apple.dock autohide -bool false
+    defaults write com.apple.dock autohide -bool true
+    defaults delete com.apple.dock autohide-delay 2>/dev/null
     defaults write com.apple.dock show-recents -bool false
     defaults write com.apple.dock mineffect -string scale
     # Dark grey, graphite accent and highlight, like NeXTSTEP's monochrome look
@@ -178,8 +180,6 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         # An older build's Accessibility entry no longer matches this signature; clear it so the switch is real
         tccutil reset Accessibility com.macaroon.NeXTWorkspace 2>/dev/null
         launchctl bootstrap gui/$(id -u) "$agent"
-        defaults write com.apple.dock autohide -bool true
-        defaults write com.apple.dock autohide-delay -float 1000
         echo "NeXT Workspace installed. Allow it in System Settings > Privacy & Security > Accessibility so its menu can show each app's menus."
     else
         echo "Skipped: NeXT Workspace.app is not in the Shared Folder (build it on the Mac with Tools/TinyMacII/build.sh)"
