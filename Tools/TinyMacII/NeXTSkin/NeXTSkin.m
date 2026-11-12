@@ -226,6 +226,15 @@ static void NXTile(id self, SEL _cmd) {
     CGFloat left = MIN(bar.origin.x, content.origin.x);
     bar.origin.x = left;
     content.origin.x = left + bar.size.width;
+    // Stop above the NeXT resize bar laid over the window's bottom edge (it hid half the down arrow)
+    if (objc_getAssociatedObject(sv.window, kSkinnedKey)) {
+        CGFloat bottom = NSMinY([sv convertRect:sv.bounds toView:nil]), overlap = kResizeHeight - bottom;
+        if (overlap > 0) {
+            bar.size.height = MAX(0, bar.size.height - overlap);
+            content.size.height = MAX(0, content.size.height - overlap);
+            if (!sv.isFlipped) { bar.origin.y += overlap; content.origin.y += overlap; }
+        }
+    }
     scroller.frame = bar;
     sv.contentView.frame = content;
 }
