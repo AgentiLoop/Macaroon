@@ -35,6 +35,9 @@ NSGraphicsContext.restoreGraphicsState()
 
 // Mac: a classic compact Mac with a smiling screen (top left)
 do {
+    NSGraphicsContext.saveGraphicsState()
+    let grow = NSAffineTransform() // 1.5× about the quadrant's centre, so it fills the quadrant like the others
+    grow.translateX(by: mac.midX, yBy: mac.midY); grow.scale(by: 1.5); grow.translateX(by: -mac.midX, yBy: -mac.midY); grow.concat()
     let o = NSPoint(x: mac.midX - 85, y: mac.midY - 94)
     let body = rr(NSRect(x: o.x, y: o.y, width: 170, height: 210), 18)
     c(0xFBF7EE).setFill(); body.fill(); c(0x6B6150).setStroke(); body.lineWidth = 6; body.stroke()
@@ -48,6 +51,7 @@ do {
     c(0x6B6150).setFill()
     NSBezierPath(rect: NSRect(x: o.x + 95, y: o.y + 40, width: 52, height: 7)).fill() // floppy slot
     rr(NSRect(x: o.x + 10, y: o.y - 22, width: 150, height: 22), 6).fill() // foot
+    NSGraphicsContext.restoreGraphicsState()
 }
 
 // Windows: four panes (top right)
