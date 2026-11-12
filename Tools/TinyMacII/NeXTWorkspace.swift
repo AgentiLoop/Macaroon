@@ -337,10 +337,11 @@ final class Tile: NSView {
     }
 
     /// A shaded cube, the Workspace's own tile.
-    /// The NeXT cube: a black cube tilted 28° onto one corner, "Ne" over "XT" set across its two front faces
-    /// in light grey (matching the all-grey Dock), black outline and a hard drop shadow like the other tiles.
+    /// The NeXT cube logo in black, white and grey: a black cube tilted 28° onto one corner, its edges picked out
+    /// in white, "Ne" over "XT" set across its two front faces with each letter in its own grey (where the
+    /// original has four colours), and a hard drop shadow like the other tiles.
     private func drawCube() {
-        let s: CGFloat = 16
+        let s: CGFloat = 18
         NSGraphicsContext.saveGraphicsState()
         let tilt = NSAffineTransform()
         tilt.translateX(by: bounds.midX, yBy: bounds.midY)
@@ -357,19 +358,21 @@ final class Tile: NSView {
             p.close()
             return p
         }
-        NSColor(calibratedWhite: 0.15, alpha: 1).setFill() // shadow, down and right
+        NSColor(calibratedWhite: 0.25, alpha: 1).setFill() // shadow, down and right
         for face in [top, left, right] { path(face, dx: 2, dy: -2).fill() }
-        for (face, white) in [(top, 0.3), (left, 0.08), (right, 0.18)] as [([NSPoint], CGFloat)] {
+        for face in [top, left, right] { // all black, white edges like the logo's
             let p = path(face)
-            NSColor(calibratedWhite: white, alpha: 1).setFill()
+            NSColor.black.setFill()
             p.fill()
-            NSColor.black.setStroke()
-            p.lineWidth = 1
+            NSColor(calibratedWhite: 0.9, alpha: 1).setStroke()
+            p.lineWidth = 0.75
             p.stroke()
         }
         // Letters: "Ne" on the upper row, "XT" on the lower, each half sheared onto its face
-        let letters = NSFont(name: "Helvetica-Bold", size: 46) ?? .boldSystemFont(ofSize: 46)
-        let attributes: [NSAttributedString.Key: Any] = [.font: letters, .foregroundColor: NSColor(calibratedWhite: 0.82, alpha: 1)]
+        let letters = NSFont(name: "Helvetica-Bold", size: 48) ?? .boldSystemFont(ofSize: 48)
+        func letter(_ text: String, _ at: NSPoint, _ white: CGFloat) {
+            (text as NSString).draw(at: at, withAttributes: [.font: letters, .foregroundColor: NSColor(calibratedWhite: white, alpha: 1)])
+        }
         func onFace(_ origin: NSPoint, _ xAxis: NSPoint, _ draw: () -> Void) {
             NSGraphicsContext.saveGraphicsState()
             let t = NSAffineTransform()
@@ -379,12 +382,12 @@ final class Tile: NSView {
             NSGraphicsContext.restoreGraphicsState()
         }
         onFace(NSPoint(x: -s, y: -s / 2), NSPoint(x: s, y: -s / 2)) { // left face: N and X
-            ("N" as NSString).draw(at: NSPoint(x: 22, y: 48), withAttributes: attributes)
-            ("X" as NSString).draw(at: NSPoint(x: 22, y: 2), withAttributes: attributes)
+            letter("N", NSPoint(x: 20, y: 47), 1)
+            letter("X", NSPoint(x: 20, y: 1), 0.6)
         }
         onFace(NSPoint(x: 0, y: -s), NSPoint(x: s, y: s / 2)) { // right face: e and T
-            ("e" as NSString).draw(at: NSPoint(x: 6, y: 48), withAttributes: attributes)
-            ("T" as NSString).draw(at: NSPoint(x: 6, y: 2), withAttributes: attributes)
+            letter("e", NSPoint(x: 6, y: 47), 0.8)
+            letter("T", NSPoint(x: 6, y: 1), 0.7)
         }
         NSGraphicsContext.restoreGraphicsState()
     }
