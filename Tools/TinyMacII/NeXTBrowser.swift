@@ -212,33 +212,87 @@ final class ResizeBar: NSView {
 
 // MARK: Browser window
 
-/// NeXT scrollers for every page, matching the File Viewer: dark grey track, bevelled grey knob, square arrow
-/// buttons with black triangles, both at the bottom (vertical) or left (horizontal) end.
-let scrollbarCSS: String = {
-    func arrow(_ points: String) -> String {
-        "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8'><polygon points='\(points)' fill='black'/></svg>\")"
-    }
-    let bevel = "background-color:#aaa;border-style:solid;border-width:1px;border-color:#fff #000 #000 #fff;box-shadow:inset -1px -1px 0 #555;"
-    return """
-    ::-webkit-scrollbar{width:18px;height:18px;background:#555}
-    ::-webkit-scrollbar-track{background:#555}
-    ::-webkit-scrollbar-thumb{\(bevel)border-radius:0;min-height:18px;min-width:18px}
-    ::-webkit-scrollbar-corner{background:#aaa}
-    ::-webkit-scrollbar-button{display:none}
-    ::-webkit-scrollbar-button:vertical:end:decrement,::-webkit-scrollbar-button:vertical:end:increment,
-    ::-webkit-scrollbar-button:horizontal:start:decrement,::-webkit-scrollbar-button:horizontal:start:increment
-    {display:block;width:18px;height:18px;\(bevel)background-repeat:no-repeat;background-position:center}
-    ::-webkit-scrollbar-button:vertical:end:decrement{background-image:\(arrow("0,7 4,1 8,7"))}
-    ::-webkit-scrollbar-button:vertical:end:increment{background-image:\(arrow("0,1 4,7 8,1"))}
-    ::-webkit-scrollbar-button:horizontal:start:decrement{background-image:\(arrow("7,0 1,4 7,8"))}
-    ::-webkit-scrollbar-button:horizontal:start:increment{background-image:\(arrow("1,0 7,4 1,8"))}
-    """
-}()
+/// WebKit's page scrollbars can't be restyled reliably (pages and newer WebKit override ::-webkit-scrollbar), so
+/// they're hidden and the page gets an AppKit PageScroller instead; the page reports its scroll position to it.
+let hideScrollbarsCSS = "html,body{scrollbar-width:none !important}::-webkit-scrollbar{display:none !important;width:0 !important;height:0 !important}"
 
 let scrollbarScript = WKUserScript(source: """
-    (function(){var s=document.createElement('style');s.textContent=\(String(data: try! JSONEncoder().encode(scrollbarCSS), encoding: .utf8)!);
+    (function(){var s=document.createElement('style');s.textContent='\(hideScrollbarsCSS)';
     (document.head||document.documentElement).appendChild(s);})();
     """, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+
+let scrollReportScript = WKUserScript(source: """
+    (function(){function post(){var e=document.scrollingElement||document.documentElement;
+    window.webkit.messageHandlers.pageScroll.postMessage([e.scrollTop,e.scrollHeight,e.clientHeight]);}
+    addEventListener('scroll',post,{passive:true});addEventListener('resize',post);addEventListener('load',post);
+    new ResizeObserver(post).observe(document.documentElement);post();})();
+    """, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+
+/// Routes each page's scroll report to its window's scroller.
+final class ScrollReports: NSObject, WKScriptMessageHandler {
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let values = message.body as? [NSNumber], values.count == 3,
+              let browser = Browser.all.first(where: { $0.web === message.webView }) else { return }
+        browser.scroller.update(top: CGFloat(truncating: values[0]), content: CGFloat(truncating: values[1]), visible: CGFloat(truncating: values[2]))
+    }
+}
+let scrollReports = ScrollReports()
+
+/// The page's scroller, the File Viewer's: on the left, dark track, bevelled knob, both arrow buttons at the bottom.
+final class PageScroller: NSView {
+    static let bar: CGFloat = 18
+    var scroll: (CGFloat) -> Void = { _ in }
+    private var top: CGFloat = 0, content: CGFloat = 0, visible: CGFloat = 0
+    private let bar = PageScroller.bar
+    private var maxTop: CGFloat { max(0, content - visible) }
+    private var downButton: NSRect { NSRect(x: 0, y: 0, width: bar, height: bar) }
+    private var upButton: NSRect { NSRect(x: 0, y: bar, width: bar, height: bar) }
+    private var track: NSRect { NSRect(x: 0, y: 2 * bar, width: bar, height: max(0, bounds.height - 2 * bar)) }
+    private var knob: NSRect {
+        let height = min(track.height, max(bar, track.height * visible / max(content, 1)))
+        return NSRect(x: 0, y: track.maxY - height - (track.height - height) * top / max(maxTop, 1), width: bar, height: height)
+    }
+
+    func update(top: CGFloat, content: CGFloat, visible: CGFloat) {
+        (self.top, self.content, self.visible) = (top, content, visible)
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        fill(dark, track)
+        if maxTop > 0 { bevel(knob.insetBy(dx: 1, dy: 1)) }
+        for (button, up) in [(upButton, true), (downButton, false)] {
+            bevel(button)
+            let t = NSBezierPath(), x = button.midX, y = button.midY
+            t.move(to: NSPoint(x: x - 4, y: up ? y - 3 : y + 3))
+            t.line(to: NSPoint(x: x, y: up ? y + 3 : y - 3))
+            t.line(to: NSPoint(x: x + 4, y: up ? y - 3 : y + 3))
+            t.close()
+            NSColor.black.setFill()
+            t.fill()
+        }
+        fill(.black, NSRect(x: bar, y: 0, width: 1, height: bounds.height))
+    }
+
+    private func go(_ newTop: CGFloat) {
+        top = min(maxTop, max(0, newTop))
+        needsDisplay = true
+        scroll(top)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if upButton.contains(p) { return go(top - 40) }
+        if downButton.contains(p) { return go(top + 40) }
+        guard maxTop > 0, let window else { return }
+        let grab = knob.contains(p) ? knob.maxY - p.y : knob.height / 2
+        func move(_ y: CGFloat) { go((track.maxY - (y + grab)) / max(track.height - knob.height, 1) * maxTop) }
+        move(p.y)
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]), next.type == .leftMouseDragged {
+            move(convert(next.locationInWindow, from: nil).y)
+        }
+    }
+}
 
 /// The page view. Pages like DuckDuckGo focus their own search box as they load, which made WebKit take the
 /// keyboard from the address field mid-typing; it only takes it now when the user clicks in the page or tabs in.
@@ -271,6 +325,7 @@ final class Browser: NSObject, NSWindowDelegate, NSTextFieldDelegate, WKNavigati
     let web: PageView
     let field = NSTextField()
     let status = StatusLine()
+    let scroller = PageScroller()
     private var back: NeXTButton!, forward: NeXTButton!, reload: NeXTButton!
     private var watchers: [NSKeyValueObservation] = []
     /// The user is in the address field (from a click, Open Location or a new window) until they go or click the page.
@@ -288,7 +343,11 @@ final class Browser: NSObject, NSWindowDelegate, NSTextFieldDelegate, WKNavigati
 
     private init(_ url: URL?, configuration: WKWebViewConfiguration) {
         let controller = configuration.userContentController // shared with pop-ups, so add the style once
-        if !controller.userScripts.contains(where: { $0.source == scrollbarScript.source }) { controller.addUserScript(scrollbarScript) }
+        if !controller.userScripts.contains(where: { $0.source == scrollbarScript.source }) {
+            controller.addUserScript(scrollbarScript)
+            controller.addUserScript(scrollReportScript)
+            controller.add(scrollReports, name: "pageScroll")
+        }
         web = PageView(frame: .zero, configuration: configuration)
         super.init()
         let body = window.body, w = body.bounds.width, h = body.bounds.height
@@ -330,7 +389,14 @@ final class Browser: NSObject, NSWindowDelegate, NSTextFieldDelegate, WKNavigati
         field.delegate = self
         well.addSubview(field)
 
-        web.frame = NSRect(x: 0, y: statusHeight, width: w, height: h - toolbar - statusHeight)
+        let pageHeight = h - toolbar - statusHeight
+        scroller.frame = NSRect(x: 0, y: statusHeight, width: PageScroller.bar + 1, height: pageHeight)
+        scroller.autoresizingMask = [.height]
+        scroller.scroll = { [weak self] top in
+            self?.web.evaluateJavaScript("(document.scrollingElement||document.documentElement).scrollTop=\(top)")
+        }
+        body.addSubview(scroller)
+        web.frame = NSRect(x: PageScroller.bar + 1, y: statusHeight, width: w - PageScroller.bar - 1, height: pageHeight)
         web.autoresizingMask = [.width, .height]
         web.navigationDelegate = self
         web.addressActive = { [weak self] in self?.addressActive ?? false }
