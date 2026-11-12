@@ -142,16 +142,22 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     # NeXT Workspace (Tools/TinyMacII): NeXTSTEP's tile Dock on the right and its vertical main menu at the top
     # left, started at every login. It replaces the macOS Dock, which is pushed out of the way.
     src="/Volumes/My Shared Files/NeXT Workspace.app"
+    # Copies an app from the shared folder without quarantine or other attributes, then re-signs it here (ad hoc,
+    # same identifier requirement). A quarantined ad-hoc app is what macOS reports as "damaged".
+    install_app() {
+        rm -rf "$2"
+        ditto --noextattr --noqtn "$1" "$2"
+        xattr -cr "$2"
+        codesign -s - -f -r="designated => identifier \"$3\"" "$2" >/dev/null 2>&1 || echo "Could not sign $2"
+    }
     if [ -d "$src" ]; then
         mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
-        rm -rf "$HOME/Applications/NeXT Workspace.app"
-        ditto "$src" "$HOME/Applications/NeXT Workspace.app"
+        install_app "$src" "$HOME/Applications/NeXT Workspace.app" com.macaroon.NeXTWorkspace
         # NeXT apps replace their macOS counterparts in the Dock (also in a Dock saved by an earlier run)
         for pair in "NeXT Calculator:/System/Applications/Calculator.app" "NeXT Browser:/Applications/Safari.app"; do
             name=${pair%%:*} old=${pair#*:}
             [ -d "/Volumes/My Shared Files/$name.app" ] || continue
-            rm -rf "$HOME/Applications/$name.app"
-            ditto "/Volumes/My Shared Files/$name.app" "$HOME/Applications/$name.app"
+            install_app "/Volumes/My Shared Files/$name.app" "$HOME/Applications/$name.app" "com.macaroon.${name// /}"
             dock=$(defaults read com.macaroon.NeXTWorkspace DockApps 2>/dev/null | grep -o '"[^"]*"' | tr -d '"')
             if [ -n "$dock" ]; then
                 defaults write com.macaroon.NeXTWorkspace DockApps -array ${(f)"$(print -r -- "$dock" | sed "s|^$old$|$HOME/Applications/$name.app|")"}
