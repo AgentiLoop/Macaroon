@@ -1,5 +1,6 @@
-// Draws Macaroon's app icon: a macaroon over four quadrants, one per guest it runs:
-// Mac (a classic compact Mac), Windows (four panes), Linux (a penguin) and NeXT (the black cube).
+// Draws Macaroon's app icon: four quadrants, one per guest it runs: Mac (a classic compact Mac), Windows (four
+// panes), Linux (Tux, from Tux.svg next to this file: Larry Ewing's Tux, lewing@isc.tamu.edu, made with The GIMP;
+// Wikimedia Commons Tux.svg) and NeXT (the black cube).
 // Usage: swift MacaroonIcon.swift <out.png>   (1024×1024, Apple's macOS icon grid: 824-pixel rounded square)
 import AppKit
 
@@ -34,7 +35,7 @@ NSGraphicsContext.restoreGraphicsState()
 
 // Mac: a classic compact Mac with a smiling screen (top left)
 do {
-    let o = NSPoint(x: mac.minX + 95, y: mac.minY + 120)
+    let o = NSPoint(x: mac.midX - 85, y: mac.midY - 94)
     let body = rr(NSRect(x: o.x, y: o.y, width: 170, height: 210), 18)
     c(0xFBF7EE).setFill(); body.fill(); c(0x6B6150).setStroke(); body.lineWidth = 6; body.stroke()
     let screen = rr(NSRect(x: o.x + 22, y: o.y + 80, width: 126, height: 100), 10)
@@ -51,37 +52,25 @@ do {
 
 // Windows: four panes (top right)
 do {
-    let s: CGFloat = 92, gap: CGFloat = 12, ox = win.midX - s - gap / 2 + 25, oy = win.midY - s - gap / 2 + 20
+    let s: CGFloat = 92, gap: CGFloat = 12, ox = win.midX - s - gap / 2, oy = win.midY - s - gap / 2
     for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
         c(0xFFFFFF, 0.95).setFill()
         NSBezierPath(rect: NSRect(x: ox + CGFloat(dx) * (s + gap), y: oy + CGFloat(dy) * (s + gap), width: s, height: s)).fill()
     }
 }
 
-// Linux: a penguin (bottom left)
+// Linux: Tux (bottom left)
 do {
-    let cx = linux.midX - 30, by = linux.minY + 95
-    c(0x1B1B1B).setFill()
-    NSBezierPath(ovalIn: NSRect(x: cx - 80, y: by, width: 160, height: 200)).fill() // body
-    NSBezierPath(ovalIn: NSRect(x: cx - 58, y: by + 160, width: 116, height: 110)).fill() // head
-    c(0xFFFFFF).setFill()
-    NSBezierPath(ovalIn: NSRect(x: cx - 55, y: by + 15, width: 110, height: 150)).fill() // belly
-    NSBezierPath(ovalIn: NSRect(x: cx - 34, y: by + 205, width: 26, height: 32)).fill() // eyes
-    NSBezierPath(ovalIn: NSRect(x: cx + 8, y: by + 205, width: 26, height: 32)).fill()
-    c(0x1B1B1B).setFill()
-    NSBezierPath(ovalIn: NSRect(x: cx - 24, y: by + 212, width: 12, height: 14)).fill()
-    NSBezierPath(ovalIn: NSRect(x: cx + 14, y: by + 212, width: 12, height: 14)).fill()
-    c(0xF7A21B).setFill()
-    let beak = NSBezierPath(); beak.move(to: NSPoint(x: cx - 22, y: by + 200)); beak.line(to: NSPoint(x: cx + 22, y: by + 200))
-    beak.line(to: NSPoint(x: cx, y: by + 178)); beak.close(); beak.fill()
-    NSBezierPath(ovalIn: NSRect(x: cx - 78, y: by - 14, width: 64, height: 30)).fill() // feet
-    NSBezierPath(ovalIn: NSRect(x: cx + 14, y: by - 14, width: 64, height: 30)).fill()
+    let svg = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Tux.svg")
+    guard let tux = NSImage(contentsOf: svg) else { fatalError("Tux.svg missing next to MacaroonIcon.swift") }
+    let h: CGFloat = 300, w = h * tux.size.width / tux.size.height
+    tux.draw(in: NSRect(x: linux.midX - w / 2, y: linux.midY - h / 2, width: w, height: h))
 }
 
 // NeXT: the black cube, tilted, with "NeXT" on its front face (bottom right)
 do {
     NSGraphicsContext.saveGraphicsState()
-    let t = NSAffineTransform(); t.translateX(by: next.midX + 30, yBy: next.midY - 30); t.rotate(byDegrees: 28); t.concat()
+    let t = NSAffineTransform(); t.translateX(by: next.midX + 14, yBy: next.midY + 14); t.rotate(byDegrees: 28); t.concat()
     let a: CGFloat = 92, d: CGFloat = 40
     func poly(_ p: [NSPoint]) -> NSBezierPath { let b = NSBezierPath(); b.move(to: p[0]); p.dropFirst().forEach { b.line(to: $0) }; b.close(); return b }
     let front = poly([NSPoint(x: -a, y: -a), NSPoint(x: a, y: -a), NSPoint(x: a, y: a), NSPoint(x: -a, y: a)])
@@ -95,33 +84,6 @@ do {
         (text as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: [.font: font, .foregroundColor: c(colour)])
     }
     NSGraphicsContext.restoreGraphicsState()
-}
-
-// The macaroon in the middle, over all four
-do {
-    let cx: CGFloat = 512, cy: CGFloat = 512, w: CGFloat = 330
-    NSGraphicsContext.saveGraphicsState()
-    let sh = NSShadow(); sh.shadowColor = c(0, 0.4); sh.shadowBlurRadius = 22; sh.shadowOffset = NSSize(width: 0, height: -12); sh.set()
-    func shell(_ y: CGFloat, top: Bool) {
-        let r = NSRect(x: cx - w / 2, y: y, width: w, height: 105)
-        let p = rr(r, 52)
-        NSGradient(starting: c(top ? 0xFFB3C9 : 0xF58BAA), ending: c(top ? 0xF27CA0 : 0xE0628C))!.draw(in: p, angle: -90)
-        // the macaroon "foot": a ruffled band where the shell meets the filling
-        let footY = top ? r.minY : r.maxY - 18
-        let foot = NSBezierPath()
-        foot.move(to: NSPoint(x: r.minX + 18, y: footY + 9))
-        var x = r.minX + 18
-        while x < r.maxX - 18 { foot.appendOval(in: NSRect(x: x, y: footY + 2, width: 18, height: 14)); x += 15 }
-        c(top ? 0xE8749A : 0xD65A84).setFill(); foot.fill()
-    }
-    shell(cy + 22, top: true)
-    shell(cy - 127, top: false)
-    NSGraphicsContext.restoreGraphicsState()
-    let cream = rr(NSRect(x: cx - w / 2 + 14, y: cy - 30, width: w - 28, height: 60), 30)
-    NSGradient(starting: c(0xFFF8EC), ending: c(0xF2E2C4))!.draw(in: cream, angle: -90)
-    // highlight on the top shell
-    c(0xFFFFFF, 0.45).setFill()
-    NSBezierPath(ovalIn: NSRect(x: cx - 110, y: cy + 92, width: 120, height: 22)).fill()
 }
 
 // Thin rim
