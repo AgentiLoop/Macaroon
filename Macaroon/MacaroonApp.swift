@@ -155,6 +155,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         touch "$2"
         /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$2" 2>/dev/null
         echo "Installed ${2:t} (build $(defaults read "$2/Contents/Info" CFBundleVersion 2>/dev/null))"
+        [ -f "$2/Contents/Resources/Assets.car" ] || echo "  WARNING: ${2:t} has no icon (no Assets.car in $1); rebuild with Tools/TinyMacII/build.sh"
     }
     if [ -d "$src" ]; then
         mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
