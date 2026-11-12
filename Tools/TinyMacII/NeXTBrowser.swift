@@ -87,7 +87,7 @@ final class StatusLine: NSView {
     override func draw(_ dirtyRect: NSRect) {
         fill(face, bounds)
         let well = bounds.insetBy(dx: 4, dy: 2)
-        bevel(well, sunken: true, color: NSColor(calibratedWhite: 0.75, alpha: 1))
+        bevel(well, sunken: true, color: wellColor)
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byTruncatingMiddle
         let height = (text as NSString).size(withAttributes: [.font: font]).height
@@ -96,9 +96,10 @@ final class StatusLine: NSView {
     }
 }
 
-/// A square, sunken white well (NeXT's text field look) that holds the address field.
+/// A square, sunken grey well that holds the address field, drawn exactly like the status line's well.
+let wellColor = NSColor(calibratedWhite: 0.75, alpha: 1)
 final class SunkenWell: NSView {
-    override func draw(_ dirtyRect: NSRect) { bevel(bounds, sunken: true, color: .white) }
+    override func draw(_ dirtyRect: NSRect) { bevel(bounds, sunken: true, color: wellColor) }
 }
 
 // MARK: NeXT window
@@ -282,13 +283,14 @@ final class Browser: NSObject, NSWindowDelegate, NSTextFieldDelegate, WKNavigati
         let well = SunkenWell(frame: NSRect(x: x + 6, y: h - toolbar + 6, width: w - x - 12, height: 24))
         well.autoresizingMask = [.width, .minYMargin]
         body.addSubview(well)
-        field.frame = well.bounds.insetBy(dx: 3, dy: 3)
+        field.frame = well.bounds.insetBy(dx: 4, dy: 3)
         field.autoresizingMask = [.width, .height]
         field.font = font
         field.isBezeled = false
         field.isBordered = false
-        field.drawsBackground = true
-        field.backgroundColor = .white
+        field.drawsBackground = false // the well's grey shows through: no rounded white box inside
+        field.textColor = .black
+        field.appearance = NSAppearance(named: .aqua) // black text and caret while editing, even in Dark Mode
         field.focusRingType = .none
         field.cell?.isScrollable = true
         field.cell?.wraps = false
