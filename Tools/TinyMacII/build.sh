@@ -55,6 +55,9 @@ build() {
 EOF
     # A designated requirement on the identifier (not the ad-hoc hash), so permissions survive rebuilds
     codesign -s - -f -r="designated => identifier \"$4\"" "$app"
+    # Finder and the Dock cache icons by path: tell them this bundle (and its icon) changed
+    touch "$app"
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app"
     echo "Built $app"
 }
 

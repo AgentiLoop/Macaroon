@@ -151,6 +151,9 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         ditto --noextattr --noqtn "$1" "$2"
         xattr -cr "$2"
         codesign -s - -f -r="designated => identifier \"$3\"" "$2" >/dev/null 2>&1 || echo "Could not sign $2"
+        # Fresh icon in Finder and the Dock (they cache icons by path)
+        touch "$2"
+        /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$2" 2>/dev/null
     }
     if [ -d "$src" ]; then
         mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
