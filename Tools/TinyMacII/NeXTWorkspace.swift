@@ -368,14 +368,14 @@ final class Tile: NSView {
             p.stroke()
         }
         // "Ne" over "XT", all on the front face
-        let letters = NSFont(name: "Helvetica-Bold", size: 15) ?? .boldSystemFont(ofSize: 15)
+        let letters = NSFont(name: "Helvetica-Light", size: 15) ?? NSFont(name: "Helvetica", size: 15) ?? .systemFont(ofSize: 15, weight: .light)
         func letter(_ text: String, _ x: CGFloat, _ y: CGFloat, _ white: CGFloat) {
             (text as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: [.font: letters, .foregroundColor: NSColor(calibratedWhite: white, alpha: 1)])
         }
-        letter("N", -13, 0, 1)
-        letter("e", 1, 0, 0.8)
-        letter("X", -13, -15, 0.6)
-        letter("T", 1, -15, 0.7)
+        letter("N", -13, 0, 0.7)
+        letter("e", 1, 0, 0.6)
+        letter("X", -13, -15, 0.5)
+        letter("T", 1, -15, 0.65)
         NSGraphicsContext.restoreGraphicsState()
     }
 
