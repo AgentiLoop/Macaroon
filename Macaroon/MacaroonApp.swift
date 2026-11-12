@@ -770,10 +770,19 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         return vm
     }
 
-    func start() async {
+    /// `recovery`: macOS guests boot into macOS Recovery (Utilities → Terminal → csrutil disable to turn SIP off).
+    func start(recovery: Bool = false) async {
         do {
             let vm = try makeMachine()
             machine = vm
+            if recovery, guest.isMac {
+                let options = VZMacOSVirtualMachineStartOptions()
+                options.startUpFromMacOSRecovery = true
+                try await vm.start(options: options)
+                running = true
+                status = "Recovery: choose Options, sign in, then Utilities → Terminal → csrutil disable, then reboot."
+                return
+            }
             try await vm.start()
             running = true
             switch guest {
@@ -1179,6 +1188,10 @@ struct ContentView: View {
                 Spacer()
                 Button("Start") { Task { await vm.start() } }
                     .disabled(vm.busy || vm.running || !vm.isInstalled)
+                if vm.guest.isMac {
+                    Button("Start in Recovery") { Task { await vm.start(recovery: true) } }
+                        .disabled(vm.busy || vm.running || !vm.isInstalled)
+                }
                 Button("Stop") { Task { await vm.stop() } }
                     .disabled(!vm.running)
                 Menu("Snapshots") {
