@@ -45,6 +45,67 @@ func isFolder(_ path: String) -> Bool {
         && !NSWorkspace.shared.isFilePackage(atPath: path)
 }
 
+/// NeXTSTEP-style icons for the shelf and icon path: the root is a NeXT disk, folders are NeXT's flat grey
+/// folders (black outline, white top-left edge, dark shadow; the home folder has a house on it). Anything
+/// else keeps its own icon.
+func drawNeXTIcon(_ path: String, in r: NSRect) {
+    func outlined(_ shape: NSBezierPath, _ white: CGFloat) {
+        NSColor(calibratedWhite: white, alpha: 1).setFill()
+        shape.fill()
+        NSColor.black.setStroke()
+        shape.lineWidth = 1
+        shape.stroke()
+    }
+    let u = r.width / 48, x = r.minX, y = r.minY
+    func rect(_ a: CGFloat, _ b: CGFloat, _ w: CGFloat, _ h: CGFloat) -> NSRect {
+        NSRect(x: x + a * u, y: y + b * u, width: w * u, height: h * u)
+    }
+
+    if path == "/" { // the disk: a dark slab with a light label and an access slot
+        fill(NSColor(calibratedWhite: 0.15, alpha: 1), rect(5, 9, 40, 28)) // shadow
+        outlined(NSBezierPath(rect: rect(3, 11, 40, 28)), 0.33)
+        fill(NSColor(calibratedWhite: 0.55, alpha: 1), rect(4, 38, 38, 1))
+        outlined(NSBezierPath(rect: rect(8, 24, 30, 11)), 0.85)
+        fill(.black, rect(8, 16, 18, 2))
+        fill(NSColor(calibratedWhite: 0.7, alpha: 1), rect(36, 15, 3, 3))
+        return
+    }
+    guard isFolder(path) else { return NSWorkspace.shared.icon(forFile: path).draw(in: r) }
+
+    // Back of the folder with its tab, then the front panel slightly lower; a drop shadow under both
+    fill(NSColor(calibratedWhite: 0.2, alpha: 1), rect(6, 6, 40, 30))
+    let back = NSBezierPath()
+    back.move(to: NSPoint(x: x + 3 * u, y: y + 10 * u))
+    back.line(to: NSPoint(x: x + 3 * u, y: y + 40 * u))
+    back.line(to: NSPoint(x: x + 6 * u, y: y + 43 * u))
+    back.line(to: NSPoint(x: x + 18 * u, y: y + 43 * u))
+    back.line(to: NSPoint(x: x + 21 * u, y: y + 38 * u))
+    back.line(to: NSPoint(x: x + 43 * u, y: y + 38 * u))
+    back.line(to: NSPoint(x: x + 43 * u, y: y + 10 * u))
+    back.close()
+    outlined(back, 0.6)
+    let front = NSBezierPath(rect: rect(3, 8, 40, 26))
+    outlined(front, 0.8)
+    fill(.white, rect(4, 33, 38, 1)) // NeXT bevel: white top and left, grey bottom and right
+    fill(.white, rect(4, 9, 1, 24))
+    fill(NSColor(calibratedWhite: 0.5, alpha: 1), rect(4, 9, 38, 1))
+    fill(NSColor(calibratedWhite: 0.5, alpha: 1), rect(41, 9, 1, 24))
+
+    if path == NSHomeDirectory() { // a little house on the home folder
+        let house = NSBezierPath()
+        house.move(to: NSPoint(x: x + 16 * u, y: y + 13 * u))
+        house.line(to: NSPoint(x: x + 16 * u, y: y + 21 * u))
+        house.line(to: NSPoint(x: x + 13 * u, y: y + 21 * u))
+        house.line(to: NSPoint(x: x + 23 * u, y: y + 29 * u))
+        house.line(to: NSPoint(x: x + 33 * u, y: y + 21 * u))
+        house.line(to: NSPoint(x: x + 30 * u, y: y + 21 * u))
+        house.line(to: NSPoint(x: x + 30 * u, y: y + 13 * u))
+        house.close()
+        outlined(house, 1)
+        fill(.black, rect(21, 13, 4, 6)) // door
+    }
+}
+
 func makePanel() -> NSPanel {
     let p = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     // The widget layer (as in StarPlayrX's torn-off panel): desktop icons + 2, where macOS puts its own desktop
@@ -554,7 +615,7 @@ final class Shelf: NSView {
         fill(.white, NSRect(x: 0, y: 0, width: bounds.width, height: 1))
         for (i, path) in paths.enumerated() {
             let x = 8 + CGFloat(i) * slot
-            NSWorkspace.shared.icon(forFile: path).draw(in: NSRect(x: x + 16, y: 24, width: 48, height: 48))
+            drawNeXTIcon(path, in: NSRect(x: x + 16, y: 24, width: 48, height: 48))
             drawLabel(FileManager.default.displayName(atPath: path), in: NSRect(x: x, y: 4, width: slot, height: 16))
         }
     }
@@ -610,7 +671,7 @@ final class PathView: NSView {
         for (i, path) in shown.enumerated() {
             let x = CGFloat(i) * slot
             if i > 0 { fill(.black, NSRect(x: x - slot / 2 + 30, y: 48, width: slot - 60, height: 1)) } // the line joining the icons
-            NSWorkspace.shared.icon(forFile: path).draw(in: NSRect(x: x + slot / 2 - 24, y: 24, width: 48, height: 48))
+            drawNeXTIcon(path, in: NSRect(x: x + slot / 2 - 24, y: 24, width: 48, height: 48))
             drawLabel(FileManager.default.displayName(atPath: path), in: NSRect(x: x + 4, y: 4, width: slot - 8, height: 16))
         }
     }
