@@ -1168,6 +1168,12 @@ final class FileViewer: NSObject, NSWindowDelegate {
         browser.onSelect = { [weak self] in self?.selectionChanged() }
         browser.onOpen = { [weak self] in self?.openSelection() }
         [shelf, pathView, browser].forEach { window.body.addSubview($0) }
+        // Open at about half the screen at most (never below the minimum size), so it doesn't fill a small VM display
+        if let visible = NSScreen.main?.visibleFrame {
+            let size = NSSize(width: max(window.minSize.width, min(window.frame.width, visible.width * 0.55)),
+                              height: max(window.minSize.height, min(window.frame.height, visible.height * 0.6)))
+            window.setFrame(NSRect(origin: window.frame.origin, size: size), display: false)
+        }
         window.center()
         let offset = CGFloat(FileViewer.viewers.count) * 24
         window.setFrameOrigin(NSPoint(x: window.frame.minX + offset, y: window.frame.minY - offset))

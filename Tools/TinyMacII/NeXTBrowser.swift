@@ -275,6 +275,12 @@ final class Browser: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDeleg
         back.isEnabled = false
         forward.isEnabled = false
         let offset = CGFloat(Browser.all.count % 8) * 24
+        // Open at about half the screen at most (never below the minimum size), so it doesn't fill a small VM display
+        if let visible = NSScreen.main?.visibleFrame {
+            let size = NSSize(width: max(window.minSize.width, min(window.frame.width, visible.width * 0.55)),
+                              height: max(window.minSize.height, min(window.frame.height, visible.height * 0.6)))
+            window.setFrame(NSRect(origin: window.frame.origin, size: size), display: false)
+        }
         window.center()
         window.setFrameOrigin(NSPoint(x: window.frame.minX + offset, y: window.frame.minY - offset))
         if let url { web.load(URLRequest(url: url)) }
