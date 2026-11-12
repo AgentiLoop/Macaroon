@@ -4,6 +4,7 @@
 //    miniaturize box on the left, close box on the right, bold white centred title; drag it to move the window
 //  • resize bar: NeXT's bevelled bar along the bottom edge (end segments resize the width too)
 //  • scrollers: vertical scrollers become NeXT's, on the left, dark track, bevelled knob, both arrows at the bottom
+//  • corners: square (AppKit corner radius 0, no corner mask), like NeXT windows
 // Drawing matches NeXTKit.swift. Built arm64 + arm64e by build.sh.
 #import <AppKit/AppKit.h>
 #import <objc/runtime.h>
@@ -256,6 +257,8 @@ static void SkinScrollViews(NSView *view) {
 
 // MARK: Windows
 
+static void RefreshCorners(NSWindow *window);
+
 static void SkinWindow(NSWindow *window) {
     if (!(window.styleMask & NSWindowStyleMaskTitled) || [window isKindOfClass:NSPanel.class] || window.sheetParent) return;
     NSView *close = [window standardWindowButton:NSWindowCloseButton];
@@ -271,6 +274,7 @@ static void SkinWindow(NSWindow *window) {
         NXResizeBar *resize = [[NXResizeBar alloc] initWithFrame:NSMakeRect(0, 0, frameView.bounds.size.width, kResizeHeight)];
         resize.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
         [frameView addSubview:resize positioned:NSWindowAbove relativeTo:nil];
+        RefreshCorners(window);
         NSLog(@"[NeXTSkin] skinned window %@ (title bar %.0f pt)", window.title, titlebar.bounds.size.height);
     }
     // Every pass: AppKit can re-show the buttons, and new scroll views appear (new documents, the ruler)
@@ -282,9 +286,42 @@ static void SkinAll(void) {
     for (NSWindow *window in NSApp.windows) SkinWindow(window);
 }
 
+// MARK: Square corners
+
+/// Replaces an instance method (if the class has it) with a block; private AppKit, so missing methods are skipped.
+static void Replace(NSString *className, NSString *selector, id block) {
+    Class cls = NSClassFromString(className);
+    Method m = cls ? class_getInstanceMethod(cls, NSSelectorFromString(selector)) : NULL;
+    if (!m) { NSLog(@"[NeXTSkin] no -[%@ %@]", className, selector); return; }
+    class_replaceMethod(cls, NSSelectorFromString(selector), imp_implementationWithBlock(block), method_getTypeEncoding(m));
+}
+
+/// NeXT windows are square: AppKit's window corner radius becomes 0 and the corner mask goes away, so the
+/// window server neither rounds nor clips the corners (and the shadow follows the square shape).
+static void SquareCorners(void) {
+    for (NSString *cls in @[@"NSThemeFrame", @"NSWindow"]) {
+        Replace(cls, @"_cornerRadius", ^CGFloat(id self) { return 0; });
+        Replace(cls, @"_cornerMask", ^id(id self) { return nil; });
+        Replace(cls, @"_shouldRoundCornersForSurface", ^BOOL(id self) { return NO; });
+    }
+    Replace(@"NSThemeFrame", @"_getCachedDefaultWindowCornerRadius", ^CGFloat(id self) { return 0; });
+    Replace(@"NSThemeFrame", @"topCornerRounded", ^BOOL(id self) { return NO; });
+    Replace(@"NSThemeFrame", @"bottomCornerRounded", ^BOOL(id self) { return NO; });
+    Replace(@"NSWindow", @"_topCornerRadius", ^CGFloat(id self) { return 0; });
+    Replace(@"NSWindow", @"_bottomCornerRadius", ^CGFloat(id self) { return 0; });
+}
+
+/// Windows already on screen keep their cached rounded mask until told it changed.
+static void RefreshCorners(NSWindow *window) {
+    SEL changed = NSSelectorFromString(@"_cornerMaskChanged");
+    if ([window respondsToSelector:changed]) ((void (*)(id, SEL))objc_msgSend)(window, changed);
+    [window invalidateShadow];
+}
+
 static void Install(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
+        SquareCorners();
         dispatch_async(dispatch_get_main_queue(), ^{
             NSLog(@"[NeXTSkin] loaded into %@", NSProcessInfo.processInfo.processName);
             NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
