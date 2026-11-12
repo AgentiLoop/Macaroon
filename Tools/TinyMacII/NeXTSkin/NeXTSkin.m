@@ -211,15 +211,12 @@ static void Bevel(NSRect r) {
 
 // MARK: Scroll views: the scroller moves to the left
 
-static NSString *const kSubclassPrefix = @"NXSkin_";
+static IMP originalTile;
 
-/// -tile for the per-class subclass: AppKit lays out as usual, then the vertical scroller swaps to the left.
-static void NXTile(id self, SEL _cmd) {
-    Class cls = object_getClass(self);
-    while (cls && ![NSStringFromClass(cls) hasPrefix:kSubclassPrefix]) cls = class_getSuperclass(cls); // past KVO subclasses
-    struct objc_super sup = {self, class_getSuperclass(cls)};
-    ((void (*)(struct objc_super *, SEL))objc_msgSendSuper)(&sup, _cmd);
-    NSScrollView *sv = self;
+/// -[NSScrollView tile], replaced once for every scroll view (subclasses like TextEdit's ScalingScrollView call
+/// super, and KVO-observed views are covered too): AppKit lays out as usual, then a NeXT scroller swaps to the left.
+static void NXTile(NSScrollView *sv, SEL _cmd) {
+    ((void (*)(id, SEL))originalTile)(sv, _cmd);
     NSScroller *scroller = sv.verticalScroller;
     if (![scroller isKindOfClass:NXScroller.class] || scroller.isHidden) return;
     NSRect bar = scroller.frame, content = sv.contentView.frame;
@@ -241,17 +238,10 @@ static void NXTile(id self, SEL _cmd) {
 
 static void SkinScrollView(NSScrollView *sv) {
     if (!sv.hasVerticalScroller || [sv.verticalScroller isKindOfClass:NXScroller.class]) return;
-    Class original = object_getClass(sv);
-    if ([NSStringFromClass(original) hasPrefix:@"NSKVONotifying_"]) return; // leave KVO-observed views alone
-    NSString *name = [kSubclassPrefix stringByAppendingString:NSStringFromClass(original)];
-    Class subclass = NSClassFromString(name);
-    if (!subclass) {
-        subclass = objc_allocateClassPair(original, name.UTF8String, 0);
-        if (!subclass) return;
-        class_addMethod(subclass, @selector(tile), (IMP)NXTile, "v@:");
-        objc_registerClassPair(subclass);
+    if (!originalTile) {
+        Method m = class_getInstanceMethod(NSScrollView.class, @selector(tile));
+        originalTile = method_setImplementation(m, (IMP)NXTile);
     }
-    object_setClass(sv, subclass);
     sv.scrollerStyle = NSScrollerStyleLegacy;
     sv.autohidesScrollers = NO;
     sv.verticalScroller = [[NXScroller alloc] initWithFrame:NSMakeRect(0, 0, kBar + 1, 100)];
@@ -276,9 +266,9 @@ static void SkinWindow(NSWindow *window) {
         objc_setAssociatedObject(window, kSkinnedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         window.titleVisibility = NSWindowTitleHidden;
         window.titlebarAppearsTransparent = YES;
-        NXTitleBar *bar = [[NXTitleBar alloc] initWithFrame:titlebar.bounds];
-        bar.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-        [titlebar addSubview:bar positioned:NSWindowAbove relativeTo:nil];
+        // NeXT is light (white page). On the content only: changing the window's appearance swaps in a different
+        // frame view that drops the title bar container and TextEdit's formatting bar.
+        window.contentView.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
         NSView *frameView = window.contentView.superview;
         NXResizeBar *resize = [[NXResizeBar alloc] initWithFrame:NSMakeRect(0, 0, frameView.bounds.size.width, kResizeHeight)];
         resize.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
@@ -286,7 +276,28 @@ static void SkinWindow(NSWindow *window) {
         RefreshCorners(window);
         NSLog(@"[NeXTSkin] skinned window %@ (title bar %.0f pt)", window.title, titlebar.bounds.size.height);
     }
-    // Every pass: AppKit can re-show the buttons, and new scroll views appear (new documents, the ruler)
+    // Every pass: AppKit rebuilds the title bar view (appearance changes, accessories), re-shows the buttons,
+    // and new scroll views appear (new documents, the ruler)
+    titlebar = [window standardWindowButton:NSWindowCloseButton].superview;
+    NXTitleBar *bar = nil;
+    for (NSView *v in titlebar.subviews) if ([v isKindOfClass:NXTitleBar.class]) bar = (NXTitleBar *)v;
+    if (titlebar) {
+        // Only the title row: titlebar accessories below it (TextEdit's formatting bar) stay visible. Refitted
+        // every pass, since the title bar view can be mid-rebuild (window-sized) when first seen.
+        CGFloat accessories = 0;
+        for (NSTitlebarAccessoryViewController *a in window.titlebarAccessoryViewControllers)
+            if (!a.isHidden && a.layoutAttribute == NSLayoutAttributeBottom) accessories += a.view.frame.size.height;
+        NSRect row = titlebar.bounds;
+        row.origin.y = accessories;
+        row.size.height = MAX(kTitleHeight, row.size.height - accessories);
+        if (!bar) {
+            bar = [[NXTitleBar alloc] initWithFrame:row];
+            bar.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
+            [titlebar addSubview:bar positioned:NSWindowAbove relativeTo:nil];
+        } else if (!NSEqualRects(bar.frame, row)) {
+            bar.frame = row;
+        }
+    }
     for (NSWindowButton b = NSWindowCloseButton; b <= NSWindowZoomButton; b++) [window standardWindowButton:b].hidden = YES;
     SkinScrollViews(window.contentView);
 }
