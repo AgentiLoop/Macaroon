@@ -245,6 +245,18 @@ static void Bevel(NSRect r) {
 
 // MARK: Scroll views: the scroller moves to the left
 
+/// The square where the left vertical scroller meets the horizontal one: NeXT grey, black edges toward the content.
+@interface NXCorner : NSView
+@end
+
+@implementation NXCorner
+- (void)drawRect:(NSRect)dirtyRect {
+    Fill(Face(), self.bounds);
+    Fill(NSColor.blackColor, NSMakeRect(kBar, 0, 1, self.bounds.size.height));
+    Fill(NSColor.blackColor, NSMakeRect(0, self.isFlipped ? 0 : kBar, self.bounds.size.width, 1));
+}
+@end
+
 static IMP originalTile;
 
 /// -[NSScrollView tile], replaced once for every scroll view (subclasses like TextEdit's ScalingScrollView call
@@ -281,6 +293,25 @@ static void NXTile(NSScrollView *sv, SEL _cmd) {
     if (vertical) scroller.frame = bar;
     if (horizontal) hscroller.frame = hbar;
     sv.contentView.frame = content;
+    // Where the two scrollers meet: AppKit's corner box stays at the right (it showed as a white patch), and the
+    // bottom-left corner under the vertical scroller was left empty. Hide the one, fill the other NeXT grey.
+    static const void *kCornerKey = &kCornerKey;
+    NSView *corner = objc_getAssociatedObject(sv, kCornerKey);
+    if (vertical && horizontal) {
+        for (NSView *v in sv.subviews) {
+            if (v == scroller || v == hscroller || v == corner || v == sv.contentView || [v isKindOfClass:NSRulerView.class]) continue;
+            if (v.frame.size.width <= kBar + 2 && v.frame.size.height <= kBar + 2) v.hidden = YES;
+        }
+        if (!corner) {
+            corner = [[NXCorner alloc] initWithFrame:NSZeroRect];
+            objc_setAssociatedObject(sv, kCornerKey, corner, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        if (corner.superview != sv) [sv addSubview:corner positioned:NSWindowAbove relativeTo:nil];
+        corner.frame = NSMakeRect(bar.origin.x, hbar.origin.y, bar.size.width, hbar.size.height);
+        corner.hidden = NO;
+    } else {
+        corner.hidden = YES;
+    }
 }
 
 static void SkinScrollView(NSScrollView *sv) {
