@@ -158,6 +158,8 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     </dict></plist>
     EOF
         launchctl bootout gui/$(id -u) "$agent" 2>/dev/null
+        # An older build's Accessibility entry no longer matches this signature; clear it so the switch is real
+        tccutil reset Accessibility com.macaroon.NeXTWorkspace 2>/dev/null
         launchctl bootstrap gui/$(id -u) "$agent"
         defaults write com.apple.dock autohide -bool true
         defaults write com.apple.dock autohide-delay -float 1000

@@ -544,13 +544,23 @@ final class MainMenu {
         let isFinder = app.bundleIdentifier == "com.apple.finder"
         column.title = isFinder ? "Finder" : app.localizedName ?? "Workspace"
         var entries: [Entry] = []
-        if AXIsProcessTrusted(), let bar = axValue(AXUIElementCreateApplication(app.processIdentifier), kAXMenuBarAttribute) {
+        let trusted = AXIsProcessTrusted()
+        if trusted, let bar = axValue(AXUIElementCreateApplication(app.processIdentifier), kAXMenuBarAttribute) {
             // Skip the Apple menu; the app's own menu becomes Info, as on NeXTSTEP
             for (i, item) in axChildren(bar as! AXUIElement).dropFirst().enumerated() {
                 let name = i == 0 ? "Info" : axString(item, kAXTitleAttribute) ?? ""
                 if !name.isEmpty, let menu = axChildren(item).first {
                     entries.append(Entry(title: name, kind: .submenu { axEntries(menu) }))
                 }
+            }
+            menuRetries = 0
+        } else if trusted {
+            // Allowed, but the app's menu bar isn't readable yet (it's still launching): try again shortly.
+            // If it never becomes readable, the permission granted to this running copy is stale: relaunch.
+            menuRetries += 1
+            if menuRetries > 10 { relaunch() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                if self?.app == app { self?.reload() }
             }
         } else {
             // macOS only lets an app read other apps' menus once it's allowed under Accessibility. This puts
@@ -566,16 +576,27 @@ final class MainMenu {
         column.build(entries)
     }
 
-    /// Checks once a second until Accessibility is allowed, then shows the real menus without a relaunch.
+    /// Checks once a second until Accessibility is allowed. macOS often only applies a new grant to processes
+    /// started after it, so relaunch then; the fresh copy reads the menus straight away.
     private var trustTimer: Timer?
+    private var menuRetries = 0
     private func waitForTrust() {
         guard trustTimer == nil else { return }
         trustTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
             guard AXIsProcessTrusted() else { return }
             timer.invalidate()
             self?.trustTimer = nil
-            self?.reload()
+            self?.relaunch()
         }
+    }
+
+    private func relaunch() {
+        let bundle = Bundle.main.bundlePath
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", "sleep 1; /usr/bin/open -n \"$0\"", bundle]
+        try? task.run()
+        exit(0) // exit 0: the LaunchAgent (KeepAlive on failure only) leaves the relaunch to open
     }
 
     /// NeXTSTEP Workspace Manager's own menu: Info, File, Tools, Windows, Hide, Log Out.
