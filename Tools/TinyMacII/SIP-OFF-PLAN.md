@@ -69,3 +69,7 @@ Recovery with `nvram -d recovery-boot-mode`.
 - Lower security inside the VM only. The host keeps SIP on.
 - macOS 27.x updates in the VM can break the tweak; take a snapshot before each update.
 - Not shippable through the App Store; an opt-in experiment for TinyMacII.
+
+## Status
+
+- 2026-11-12: Steps 1–3 done. Started in Recovery from Macaroon, ran `csrutil disable`; after reboot `csrutil status` reports disabled and `nvram boot-args` shows `-arm64e_preview_abi`. Next: Step 4 (Ammonia + TextEdit-only NeXT tweak).
