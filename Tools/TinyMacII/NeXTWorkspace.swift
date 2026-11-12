@@ -550,13 +550,29 @@ final class MainMenu {
                 }
             }
         } else {
+            // macOS only lets an app read other apps' menus once it's allowed under Accessibility. This puts
+            // NeXT Workspace in that list (switched off) and opens the pane; the menus appear as soon as it's on.
             entries.append(Entry(title: "Allow Menus…", kind: .action {
-                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility")!)
             }))
+            waitForTrust()
         }
         entries.append(Entry(title: "Hide", key: "h", kind: .action { _ = app.hide() }))
         if !isFinder { entries.append(Entry(title: "Quit", key: "q", kind: .action { _ = app.terminate() })) }
         column.build(entries)
+    }
+
+    /// Checks once a second until Accessibility is allowed, then shows the real menus without a relaunch.
+    private var trustTimer: Timer?
+    private func waitForTrust() {
+        guard trustTimer == nil else { return }
+        trustTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
+            guard AXIsProcessTrusted() else { return }
+            timer.invalidate()
+            self?.trustTimer = nil
+            self?.reload()
+        }
     }
 
     /// NeXTSTEP Workspace Manager's own menu: Info, File, Tools, Windows, Hide, Log Out.

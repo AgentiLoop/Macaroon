@@ -23,5 +23,6 @@ cat > "$app/Contents/Info.plist" <<'EOF'
 </dict>
 </plist>
 EOF
-codesign -s - -f "$app"
+# A designated requirement on the identifier (not the ad-hoc hash), so the Accessibility permission survives rebuilds
+codesign -s - -f -r='designated => identifier "com.macaroon.NeXTWorkspace"' "$app"
 echo "Built $app"
