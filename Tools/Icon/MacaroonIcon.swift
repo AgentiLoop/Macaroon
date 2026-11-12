@@ -37,7 +37,7 @@ NSGraphicsContext.restoreGraphicsState()
 do {
     NSGraphicsContext.saveGraphicsState()
     let grow = NSAffineTransform() // 1.5× about the quadrant's centre, so it fills the quadrant like the others
-    grow.translateX(by: mac.midX, yBy: mac.midY); grow.scale(by: 1.5); grow.translateX(by: -mac.midX, yBy: -mac.midY); grow.concat()
+    grow.translateX(by: mac.midX, yBy: mac.midY); grow.scale(by: 1.485); grow.translateX(by: -mac.midX, yBy: -mac.midY); grow.concat()
     let o = NSPoint(x: mac.midX - 85, y: mac.midY - 94)
     let body = rr(NSRect(x: o.x, y: o.y, width: 170, height: 210), 18)
     c(0xFBF7EE).setFill(); body.fill(); c(0x6B6150).setStroke(); body.lineWidth = 6; body.stroke()
@@ -56,7 +56,7 @@ do {
 
 // Windows: four panes (top right)
 do {
-    let s: CGFloat = 92, gap: CGFloat = 12, ox = win.midX - s - gap / 2, oy = win.midY - s - gap / 2
+    let s: CGFloat = 92.92, gap: CGFloat = 12.12, ox = win.midX - s - gap / 2, oy = win.midY - s - gap / 2
     for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
         c(0xFFFFFF, 0.95).setFill()
         NSBezierPath(rect: NSRect(x: ox + CGFloat(dx) * (s + gap), y: oy + CGFloat(dy) * (s + gap), width: s, height: s)).fill()
