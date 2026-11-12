@@ -121,7 +121,25 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     echo "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAD0lEQVR4nGMIxQEYhpYEAOkwP8EcYhReAAAAAElFTkSuQmCC" | base64 -D > "$wall"
     osascript -e "tell application \"System Events\" to set picture of every desktop to POSIX file \"$wall\"" \
         || echo "Skipped: desktop picture (allow Terminal to control System Events, then run again)"
-    killall Dock SystemUIServer 2>/dev/null
+    # Finder as NeXTSTEP's File Viewer: the column browser (NeXT invented it), path shown above and in the title,
+    # every window opening on the home folder, full file names
+    defaults write com.apple.finder FXPreferredViewStyle -string clmv
+    defaults write com.apple.finder ShowPathbar -bool true
+    defaults write com.apple.finder ShowStatusBar -bool true
+    defaults write com.apple.finder _FXShowPosixPathInTitle -bool true
+    defaults write com.apple.finder NewWindowTarget -string PfHm
+    defaults write com.apple.finder NewWindowTargetPath -string "file://$HOME/"
+    defaults write com.apple.finder FXDefaultSearchScope -string SCcf
+    defaults write com.apple.finder FXEnableExtensionChangeWarning -bool false
+    defaults write -g AppleShowAllExtensions -bool true
+    # The Workspace desktop: no icons on it, just the grey background and the Dock
+    defaults write com.apple.finder CreateDesktop -bool false
+    # NeXT had no permanent menu bar across the top; show it only when the pointer reaches the top edge
+    defaults write -g _HIHideMenuBar -bool true
+    # Home folder as a Dock tile, like NeXT's file viewer tile (added once)
+    defaults read com.apple.dock persistent-others 2>/dev/null | grep -q "file://$HOME/\"" || defaults write com.apple.dock persistent-others -array-add \
+        "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>file://$HOME/</string><key>_CFURLStringType</key><integer>15</integer></dict><key>file-label</key><string>Home</string><key>displayas</key><integer>1</integer><key>showas</key><integer>2</integer><key>arrangement</key><integer>1</integer></dict><key>tile-type</key><string>directory-tile</string></dict>"
+    killall Dock SystemUIServer Finder 2>/dev/null
     echo "Done. Log out and back in for the dark appearance to reach every app."
     """#
     var ipswChoices: [RestoreImage] { guest == .tinyMacII ? images.filter { $0.version == Self.tinyMacIIVersion } : images }
