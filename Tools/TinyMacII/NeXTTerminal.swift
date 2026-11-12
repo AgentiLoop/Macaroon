@@ -1,8 +1,9 @@
 // NeXT Terminal for TinyMacII: NeXTSTEP's Terminal, black Courier on a white page in the square NeXT window with
 // the NeXT scroller on the left. Runs the user's login shell on a pseudo-terminal and understands the VT100/xterm
 // sequences shells and full-screen programs use (cursor movement, erasing, scroll regions, the alternate screen,
-// bracketed paste); colours become greys, as on a NeXT MegaPixel display. Scrollback, mouse selection, Copy and
-// Paste, Clear Scrollback, Larger/Smaller text. Menus show in NeXT Workspace's vertical main menu.
+// bracketed paste); 16, 256 and 24-bit colour, shown in colour or as greys like a NeXT MegaPixel display, always
+// kept readable against their background; a white or dark page. Scrollback, mouse selection, Copy and Paste,
+// Clear Scrollback, Larger/Smaller text. Menus show in NeXT Workspace's vertical main menu.
 import AppKit
 import Darwin
 
@@ -11,8 +12,8 @@ var termFont = NSFont(name: "Courier", size: 13) ?? .monospacedSystemFont(ofSize
 // MARK: Emulator
 
 struct Attr: Equatable {
-    var bold = false, underline = false, inverse = false
-    var fg: Int16 = -1, bg: Int16 = -1 // grey level 0…255, -1 for the default (black text on white)
+    var bold = false, faint = false, underline = false, inverse = false
+    var fg: Int32 = -1, bg: Int32 = -1 // 0xRRGGBB, -1 for the page's default text / background
 }
 
 struct Cell {
@@ -20,19 +21,61 @@ struct Cell {
     var attr = Attr()
 }
 
-/// ANSI / 256 / RGB colours as grey levels.
-func greyLevel(_ index: Int) -> Int16 {
-    let basic: [Int16] = [0, 85, 100, 140, 60, 115, 150, 170, 85, 130, 150, 190, 120, 160, 185, 215]
+/// ANSI 16 (xterm's, the bright half a little darker so it reads on a white page) and the 256-colour cube and
+/// grey ramp, as 0xRRGGBB.
+func paletteColour(_ index: Int) -> Int32 {
+    let basic: [Int32] = [0x000000, 0xC23621, 0x25BC24, 0xADAD27, 0x492EE1, 0xD338D3, 0x33BBC8, 0xCBCCCD,
+                          0x818383, 0xFC391F, 0x31E722, 0xC7C42C, 0x5833FF, 0xF935F8, 0x14D7DE, 0xE9EBEB]
     switch index {
     case 0..<16: return basic[index]
     case 16..<232:
-        let levels = [0, 95, 135, 175, 215, 255], i = index - 16
-        return luma(levels[i / 36], levels[i / 6 % 6], levels[i % 6])
-    case 232..<256: return Int16(8 + (index - 232) * 10)
+        let levels: [Int32] = [0, 95, 135, 175, 215, 255], i = index - 16
+        return levels[i / 36] << 16 | levels[i / 6 % 6] << 8 | levels[i % 6]
+    case 232..<256: let v = Int32(8 + (index - 232) * 10); return v << 16 | v << 8 | v
     default: return -1
     }
 }
-func luma(_ r: Int, _ g: Int, _ b: Int) -> Int16 { Int16(min(255, max(0, (299 * r + 587 * g + 114 * b) / 1000))) }
+func rgbColour(_ r: Int, _ g: Int, _ b: Int) -> Int32 { Int32(min(255, max(0, r))) << 16 | Int32(min(255, max(0, g))) << 8 | Int32(min(255, max(0, b))) }
+
+/// How colours are shown: in colour or as NeXT greys, on a white or a dark page (saved between launches).
+enum Look {
+    static var colours: Bool {
+        get { UserDefaults.standard.object(forKey: "Colours") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "Colours") }
+    }
+    static var dark: Bool {
+        get { UserDefaults.standard.bool(forKey: "DarkPage") }
+        set { UserDefaults.standard.set(newValue, forKey: "DarkPage") }
+    }
+    typealias RGB = (r: CGFloat, g: CGFloat, b: CGFloat)
+    static var pageText: RGB { dark ? (0.9, 0.9, 0.9) : (0, 0, 0) }
+    static var page: RGB { dark ? (0, 0, 0) : (1, 1, 1) }
+    static func rgb(_ v: Int32) -> RGB { (CGFloat(v >> 16 & 255) / 255, CGFloat(v >> 8 & 255) / 255, CGFloat(v & 255) / 255) }
+    static func grey(_ c: RGB) -> RGB { let l = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b; return (l, l, l) }
+    static func color(_ c: RGB) -> NSColor { NSColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: 1) }
+    /// WCAG relative luminance and contrast ratio.
+    static func luminance(_ c: RGB) -> CGFloat {
+        func ch(_ v: CGFloat) -> CGFloat { v <= 0.03928 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+        return 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b)
+    }
+    static func contrast(_ a: RGB, _ b: RGB) -> CGFloat {
+        let la = luminance(a), lb = luminance(b)
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+    }
+    /// The contrast floor: text too close to its background (light grey on white, a dim on black) is moved
+    /// toward black or white until it reads, like Terminal's and iTerm2's minimum contrast.
+    static func readable(_ text: RGB, on back: RGB, minimum: CGFloat = 4.5) -> RGB {
+        guard contrast(text, back) < minimum else { return text }
+        let target: CGFloat = luminance(back) > 0.18 ? 0 : 1
+        var t = text
+        for step in 1...10 {
+            let f = CGFloat(step) / 10
+            t = (text.r + (target - text.r) * f, text.g + (target - text.g) * f, text.b + (target - text.b) * f)
+            if contrast(t, back) >= minimum { break }
+        }
+        return t
+    }
+}
 
 final class Emulator {
     private(set) var cols: Int, rows: Int
@@ -300,22 +343,23 @@ final class Emulator {
             switch code {
             case 0: attr = Attr()
             case 1: attr.bold = true
+            case 2: attr.faint = true
             case 4: attr.underline = true
             case 7: attr.inverse = true
-            case 22: attr.bold = false
+            case 22: attr.bold = false; attr.faint = false
             case 24: attr.underline = false
             case 27: attr.inverse = false
-            case 30...37: attr.fg = greyLevel(code - 30)
+            case 30...37: attr.fg = paletteColour(code - 30)
             case 39: attr.fg = -1
-            case 40...47: attr.bg = greyLevel(code - 40)
+            case 40...47: attr.bg = paletteColour(code - 40)
             case 49: attr.bg = -1
-            case 90...97: attr.fg = greyLevel(code - 90 + 8)
-            case 100...107: attr.bg = greyLevel(code - 100 + 8)
+            case 90...97: attr.fg = paletteColour(code - 90 + 8)
+            case 100...107: attr.bg = paletteColour(code - 100 + 8)
             case 38, 48:
-                var level: Int16?
-                if i + 2 < n.count, n[i + 1] == 5 { level = greyLevel(n[i + 2]); i += 2 }
-                else if i + 4 < n.count, n[i + 1] == 2 { level = luma(n[i + 2], n[i + 3], n[i + 4]); i += 4 }
-                if let level { if code == 38 { attr.fg = level } else { attr.bg = level } }
+                var colour: Int32?
+                if i + 2 < n.count, n[i + 1] == 5 { colour = paletteColour(n[i + 2]); i += 2 }
+                else if i + 4 < n.count, n[i + 1] == 2 { colour = rgbColour(n[i + 2], n[i + 3], n[i + 4]); i += 4 }
+                if let colour { if code == 38 { attr.fg = colour } else { attr.bg = colour } }
             default: break
             }
             i += 1
@@ -366,7 +410,7 @@ final class Shell {
         env["TERM_PROGRAM"] = "NeXT_Terminal"
         env["SHELL"] = shell
         env["LANG"] = env["LANG"] ?? "en_US.UTF-8"
-        env["COLORTERM"] = nil
+        env["COLORTERM"] = "truecolor" // 24-bit colour is understood (shown in colour or as greys)
         // Prepared before forking: the child only calls chdir, execve and _exit
         let argv: [UnsafeMutablePointer<CChar>?] = [strdup("-" + (shell as NSString).lastPathComponent), nil]
         let envp: [UnsafeMutablePointer<CChar>?] = env.map { strdup("\($0.key)=\($0.value)") } + [nil]
@@ -504,7 +548,8 @@ final class TerminalView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        fill(.white, dirtyRect)
+        let page = Look.page, pageText = Look.pageText, colours = Look.colours
+        fill(Look.color(page), dirtyRect)
         let inset = Self.inset, scrollback = emulator.shownScrollback
         let first = max(0, Int((dirtyRect.minY - inset) / lineHeight))
         let last = min(lineCount, Int((dirtyRect.maxY - inset) / lineHeight) + 1)
@@ -516,14 +561,17 @@ final class TerminalView: NSView {
                 let a = cells[c].attr, selected = isSelected(i, c)
                 var end = c + 1
                 while end < cells.count, cells[end].attr == a, isSelected(i, end) == selected { end += 1 }
-                var fg = a.fg >= 0 ? CGFloat(a.fg) / 255 : 0, bg = a.bg >= 0 ? CGFloat(a.bg) / 255 : 1
+                var fg = a.fg >= 0 ? Look.rgb(a.fg) : pageText, bg = a.bg >= 0 ? Look.rgb(a.bg) : page
                 if a.inverse { swap(&fg, &bg) }
-                if selected { bg = 0.667 }
+                if selected { bg = (0.667, 0.667, 0.667) }
+                if a.faint { fg = ((fg.r + bg.r) / 2, (fg.g + bg.g) / 2, (fg.b + bg.b) / 2) }
+                if !colours { fg = Look.grey(fg); bg = Look.grey(bg) }
+                fg = Look.readable(fg, on: bg)
                 let rect = NSRect(x: inset + CGFloat(c) * charWidth, y: top, width: CGFloat(end - c) * charWidth, height: lineHeight)
-                if bg < 1 { fill(NSColor(calibratedWhite: bg, alpha: 1), rect) }
+                if bg != page { fill(Look.color(bg), rect) }
                 let text = String(cells[c..<end].map(\.ch))
                 if text.contains(where: { $0 != " " }) {
-                    var attributes: [NSAttributedString.Key: Any] = [.font: a.bold ? bold : termFont, .foregroundColor: NSColor(calibratedWhite: fg, alpha: 1)]
+                    var attributes: [NSAttributedString.Key: Any] = [.font: a.bold ? bold : termFont, .foregroundColor: Look.color(fg)]
                     if a.underline { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
                     (text as NSString).draw(at: rect.origin, withAttributes: attributes)
                 }
@@ -536,11 +584,11 @@ final class TerminalView: NSView {
         let r = cursorRect
         if window?.isKeyWindow == true, window?.firstResponder === self {
             guard blinkOn else { return }
-            fill(.black, r)
+            fill(Look.color(pageText), r)
             let cell = emulator.lines[emulator.y][min(emulator.x, emulator.cols - 1)]
-            (String(cell.ch) as NSString).draw(at: r.origin, withAttributes: [.font: cell.attr.bold ? bold : termFont, .foregroundColor: NSColor.white])
+            (String(cell.ch) as NSString).draw(at: r.origin, withAttributes: [.font: cell.attr.bold ? bold : termFont, .foregroundColor: Look.color(page)])
         } else {
-            NSColor.black.setStroke()
+            Look.color(pageText).setStroke()
             NSBezierPath(rect: r.insetBy(dx: 0.5, dy: 0.5)).stroke()
         }
     }
@@ -678,7 +726,7 @@ final class Session: NSObject, NSWindowDelegate {
         window.minSize = NSSize(width: 240, height: 140)
         scroll.autoresizingMask = [.width, .height]
         scroll.drawsBackground = true
-        scroll.backgroundColor = .white
+        scroll.backgroundColor = Look.color(Look.page)
         view.frame = NSRect(origin: .zero, size: scroll.contentSize)
         view.autoresizingMask = [.width]
         scroll.documentView = view
@@ -716,6 +764,11 @@ final class Session: NSObject, NSWindowDelegate {
         view.contentChanged(follow: true)
     }
 
+    func lookChanged() {
+        scroll.backgroundColor = Look.color(Look.page)
+        view.needsDisplay = true
+    }
+
     func fontChanged() {
         view.updateFont()
         scroll.verticalLineScroll = view.lineHeight
@@ -750,7 +803,23 @@ func setFontSize(_ size: CGFloat) {
     Session.all.forEach { $0.fontChanged() }
 }
 
+private var lookItems: [NSMenuItem] = []
+func updateLookItems() {
+    lookItems[0].state = Look.colours ? .on : .off
+    lookItems[1].state = Look.colours ? .off : .on
+    lookItems[2].state = Look.dark ? .on : .off
+}
+func setLook(colours: Bool? = nil, dark: Bool? = nil) {
+    if let colours { Look.colours = colours }
+    if let dark { Look.dark = dark }
+    updateLookItems()
+    Session.all.forEach { $0.lookChanged() }
+}
+
 func buildMenus() {
+    lookItems = [Item("Colours") { setLook(colours: true) }, Item("NeXT Greys") { setLook(colours: false) },
+                 Item("Dark Page") { setLook(dark: !Look.dark) }]
+    updateLookItems()
     let front = { Session.front }
     let windows = menu("Windows", [responder("Miniaturize Window", "performMiniaturize:", "m"), Item("Close Window", "w") { NSApp.keyWindow?.performClose(nil) }])
     NSApp.mainMenu = NSMenu()
@@ -771,7 +840,8 @@ func buildMenus() {
             Item("Larger", "+") { setFontSize(termFont.pointSize + 1) },
             Item("Smaller", "-") { setFontSize(termFont.pointSize - 1) },
             Item("Normal Size", "0") { setFontSize(13) },
-        ]),
+            .separator(),
+        ] + lookItems),
         windows,
     ].forEach(NSApp.mainMenu!.addItem)
     NSApp.windowsMenu = windows.submenu
