@@ -39,16 +39,14 @@ struct Snapshot: Identifiable, Hashable {
     var hasState: Bool { FileManager.default.fileExists(atPath: url.appendingPathComponent("State.vzvmsave").path) }
 }
 
-/// macOS guests use Apple's Mac platform; Linux, Arch and Windows ARM boot from an ISO through the generic EFI platform.
-/// Each guest has its own folder (disk, NVRAM), so Arch never boots the Ubuntu disk.
+/// macOS guests use Apple's Mac platform; Linux and Windows ARM boot from an ISO through the generic EFI platform.
 enum GuestOS: String, CaseIterable, Identifiable {
-    case macOS, linux, arch, windows
+    case macOS, linux, windows
     var id: String { rawValue }
     var title: String {
         switch self {
         case .macOS: "macOS"
         case .linux: "Linux"
-        case .arch: "Arch Linux ARM"
         case .windows: "Windows ARM"
         }
     }
@@ -56,12 +54,9 @@ enum GuestOS: String, CaseIterable, Identifiable {
         switch self {
         case .macOS: "VM"
         case .linux: "Linux"
-        case .arch: "Arch"
         case .windows: "Windows"
         }
     }
-    /// Ubuntu and Arch: SPICE clipboard, LinuxGL, Paste.
-    var isLinux: Bool { self == .linux || self == .arch }
 }
 
 @MainActor
@@ -362,17 +357,15 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     // MARK: ISO catalogs (Ubuntu from cdimage.ubuntu.com, Windows 11 ARM from Microsoft)
 
     static let ubuntuReleases = URL(string: "https://cdimage.ubuntu.com/ubuntu/releases/")!
-    static let archbootISOs = URL(string: "https://release.archboot.com/aarch64/latest/iso/")!
     static let windowsPage = URL(string: "https://www.microsoft.com/en-us/software-download/windows11arm64")!
     static let msProfile = "606624d44113"
     private let msSession = UUID().uuidString.lowercased()
 
-    /// Loads the Linux, Arch and Windows ISO lists together at launch, so switching guests later is instant.
+    /// Loads the Linux and Windows ISO lists together at launch, so switching guests later is instant.
     func loadISOCatalog() async {
         async let linux: Void = loadISOCatalog(.linux)
-        async let arch: Void = loadISOCatalog(.arch)
         async let windows: Void = loadISOCatalog(.windows)
-        _ = await (linux, arch, windows)
+        _ = await (linux, windows)
     }
 
     private func loadISOCatalog(_ wanted: GuestOS) async {
@@ -381,13 +374,12 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             let found: [InstallerISO]
             switch wanted {
             case .linux: found = try await ubuntuISOs()
-            case .arch: found = try await archISO().map { [$0] } ?? []
             default: found = try await windowsISOs()
             }
             isoCache[wanted] = found
             guard guest == wanted else { return }
             showISOs()
-            if !isInstalled { status = "Choose a \(wanted == .linux ? "Ubuntu" : wanted == .arch ? "Arch Linux ARM" : "Windows 11 ARM") ISO, then Download & Install." }
+            if !isInstalled { status = "Choose a \(wanted == .linux ? "Ubuntu" : "Windows 11 ARM") ISO, then Download & Install." }
         } catch {
             guard guest == wanted else { return }
             status = "Could not load the \(wanted.title) ISO list: \(error.localizedDescription)"
@@ -427,13 +419,6 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         return result
     }
 
-    /// Arch Linux ARM through Archboot's aarch64 UEFI ISO (Arch has no official ARM ISO). Base for Omarchy.
-    private func archISO() async throws -> InstallerISO? {
-        let (index, _) = try await URLSession.shared.data(from: Self.archbootISOs)
-        let html = String(decoding: index, as: UTF8.self)
-        guard let name = html.matches(of: try Regex(#"archboot-[\w.-]+-ARCH-aarch64\.iso"#)).map({ String($0.output[0].substring ?? "") }).first else { return nil }
-        return InstallerISO(title: "Arch Linux ARM – Archboot (arm64)", fileName: name, url: Self.archbootISOs.appendingPathComponent(name))
-    }
 
     private func msRequest(_ path: String) -> URLRequest {
         var request = URLRequest(url: URL(string: "https://www.microsoft.com/software-download-connector/api/\(path)&Locale=en-US&sessionID=\(msSession)")!)
@@ -556,7 +541,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         config.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
         try addCommonDevices(to: config)
         config.socketDevices = [VZVirtioSocketDeviceConfiguration()] // Windows guest agent, Linux GPU OpenGL (LinuxGL)
-        if guest.isLinux {
+        if guest == .linux {
             // Clipboard sharing through the SPICE agent port; Ubuntu Desktop's spice-vdagent picks it up
             let spice = VZSpiceAgentPortAttachment()
             spice.sharesClipboard = true
@@ -640,7 +625,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             running = true
             switch guest {
             case .macOS: status = "Running. Drag an app onto the window; in the VM open /Volumes/My Shared Files."
-            case .linux, .arch:
+            case .linux:
                 status = installerISO != nil ? "Booting the installer ISO. After installing, Stop and Eject ISO." : "Running. Shared folder: mount -t virtiofs com.apple.virtio-fs.automount /mnt"
                 linuxGL = LinuxGL(machine: vm)
                 if linuxGL != nil { // the installed system can boot with the ISO still attached, so don't wait for an eject
@@ -998,7 +983,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             HStack {
                 Picker("Guest", selection: $vm.guest) {
-                    ForEach(GuestOS.allCases) { Text($0 == .macOS ? "Mac" : $0 == .linux ? "Linux" : $0 == .arch ? "Arch" : "Windows").tag($0) }
+                    ForEach(GuestOS.allCases) { Text($0 == .macOS ? "Mac" : $0 == .linux ? "Linux" : "Windows").tag($0) }
                 }
                 .pickerStyle(.menu)
                 .fixedSize()
@@ -1049,7 +1034,7 @@ struct ContentView: View {
                     Button("Run Command…") { runCommand() }
                         .disabled(!vm.running)
                 }
-                if vm.guest.isLinux {
+                if vm.guest == .linux {
                     Button("Paste") { vm.typeClipboard() }
                         .help("Types the Mac clipboard's text into Linux")
                         .disabled(!vm.running)
