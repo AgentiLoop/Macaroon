@@ -154,6 +154,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         # Fresh icon in Finder and the Dock (they cache icons by path)
         touch "$2"
         /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$2" 2>/dev/null
+        echo "Installed ${2:t} (build $(defaults read "$2/Contents/Info" CFBundleVersion 2>/dev/null))"
     }
     if [ -d "$src" ]; then
         mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
@@ -187,6 +188,8 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     else
         echo "Skipped: NeXT Workspace.app is not in the Shared Folder (build it on the Mac with Tools/TinyMacII/build.sh)"
     fi
+    # Icon Services caches app icons by bundle id and version; restart it so replaced apps show their new icons
+    killall iconservicesagent 2>/dev/null
     killall Dock SystemUIServer Finder 2>/dev/null
     echo "Done. Log out and back in for the dark appearance to reach every app."
     """#

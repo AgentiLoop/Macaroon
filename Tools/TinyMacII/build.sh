@@ -57,6 +57,7 @@ build() {
     <key>CFBundleExecutable</key><string>$3</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleVersion</key><string>$(date +%Y%m%d%H%M%S)</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><$5/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
