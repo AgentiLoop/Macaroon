@@ -33,6 +33,24 @@ build() {
         done
         mkdir -p "$app/Contents/Resources"
         iconutil -c icns "$set" -o "$app/Contents/Resources/AppIcon.icns" && iconKey="<key>CFBundleIconFile</key><string>AppIcon</string>"
+        # macOS 26+ shows a blank placeholder for apps without a compiled asset catalog icon, so also build
+        # Assets.car (AppIcon) with actool and name it in CFBundleIconName
+        local xc="${set:h}/Assets.xcassets" ai="${set:h}/Assets.xcassets/AppIcon.appiconset"
+        mkdir -p "$ai"
+        local images=""
+        for s in 16 32 128 256 512; do
+            cp "$set/icon_${s}x${s}.png" "$set/icon_${s}x${s}@2x.png" "$ai/"
+            images+="{\"idiom\":\"mac\",\"size\":\"${s}x${s}\",\"scale\":\"1x\",\"filename\":\"icon_${s}x${s}.png\"},"
+            images+="{\"idiom\":\"mac\",\"size\":\"${s}x${s}\",\"scale\":\"2x\",\"filename\":\"icon_${s}x${s}@2x.png\"},"
+        done
+        print -r -- "{\"images\":[${images%,}],\"info\":{\"version\":1,\"author\":\"xcode\"}}" > "$ai/Contents.json"
+        print -r -- '{"info":{"version":1,"author":"xcode"}}' > "$xc/Contents.json"
+        if xcrun actool "$xc" --compile "$app/Contents/Resources" --platform macosx --minimum-deployment-target 14.0 \
+                --app-icon AppIcon --output-partial-info-plist "${set:h}/partial.plist" >/dev/null 2>&1; then
+            iconKey+="<key>CFBundleIconName</key><string>AppIcon</string>"
+        else
+            echo "actool failed for $2 (icns only)"
+        fi
     fi
     rm -rf "${set:h}"
     cat > "$app/Contents/Info.plist" <<EOF
