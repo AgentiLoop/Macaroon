@@ -73,3 +73,4 @@ Recovery with `nvram -d recovery-boot-mode`.
 ## Status
 
 - 2026-11-12: Steps 1–3 done. Started in Recovery from Macaroon, ran `csrutil disable`; after reboot `csrutil status` reports disabled and `nvram boot-args` shows `-arm64e_preview_abi`. Next: Step 4 (Ammonia + TextEdit-only NeXT tweak).
+- 2026-11-12: Step 4 test built: Tools/TinyMacII/NeXTSkin (build.sh → Shared/NeXTSkin: Ammonia from MachLiberation fork @fe7f5f6, NeXTSkin.dylib arm64+arm64e, allowlist TextEdit, Install/Remove NeXT Skin.command). Verified on the host by DYLD_INSERT_LIBRARIES into a test AppKit app (title bar, resize bar, left scroller drawn). Not yet run in the VM.
