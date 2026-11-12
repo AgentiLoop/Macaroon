@@ -40,14 +40,16 @@ struct Snapshot: Identifiable, Hashable {
 }
 
 /// macOS guests use Apple's Mac platform; Linux and Windows ARM boot from an ISO through the generic EFI platform.
+/// TinyMac is our own tiny Linux (Tools/TinyMac) on the same EFI platform, installed from its built disk image.
 enum GuestOS: String, CaseIterable, Identifiable {
-    case macOS, linux, windows
+    case macOS, linux, windows, tinyMac
     var id: String { rawValue }
     var title: String {
         switch self {
         case .macOS: "macOS"
         case .linux: "Linux"
         case .windows: "Windows ARM"
+        case .tinyMac: "TinyMac"
         }
     }
     var folder: String {
@@ -55,6 +57,7 @@ enum GuestOS: String, CaseIterable, Identifiable {
         case .macOS: "VM"
         case .linux: "Linux"
         case .windows: "Windows"
+        case .tinyMac: "TinyMac"
         }
     }
 }
@@ -74,7 +77,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             loadSnapshots()
             status = isInstalled ? "\(guest.title) VM installed. Press Start." : guest == .macOS
                 ? "Choose a macOS IPSW from Apple, then Download & Install."
-                : "Choose an ARM64 \(guest.title) installer ISO."
+                : guest == .tinyMac ? "Press Install TinyMac." : "Choose an ARM64 \(guest.title) installer ISO."
             // Show the cached list for the new guest right away; fetch only if it was never loaded
             showISOs()
             if guest != .macOS, isoCache[guest] == nil { Task { await loadISOCatalog(guest) } }
@@ -259,6 +262,28 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         await start()
     }
 
+    /// The image Tools/TinyMac/build.sh produces.
+    var tinyMacImage: URL { base.appendingPathComponent("TinyMac/TinyMac.img") }
+
+    /// Copies the built TinyMac image in as a fresh VM's disk (a clone on APFS, so it's instant) and boots it.
+    func installTinyMac() async {
+        guard FileManager.default.fileExists(atPath: tinyMacImage.path) else {
+            status = "No TinyMac image yet. Build it with Tools/TinyMac/build.sh."
+            return
+        }
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try? FileManager.default.removeItem(at: diskURL)
+            try FileManager.default.copyItem(at: tinyMacImage, to: diskURL)
+            try createEFIMachine()
+            objectWillChange.send()
+        } catch {
+            status = "Failed: \(error.localizedDescription)"
+            return
+        }
+        await start()
+    }
+
     private func createEFIMachine() throws {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         _ = try VZEFIVariableStore(creatingVariableStoreAt: nvramURL, options: [.allowOverwrite])
@@ -371,7 +396,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     }
 
     private func loadISOCatalog(_ wanted: GuestOS) async {
-        guard wanted != .macOS else { return }
+        guard wanted == .linux || wanted == .windows else { return }
         do {
             let found: [InstallerISO]
             switch wanted {
@@ -560,8 +585,8 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         config.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
         try addCommonDevices(to: config)
         config.socketDevices = [VZVirtioSocketDeviceConfiguration()] // Windows guest agent, Linux GPU OpenGL (LinuxGL)
-        if guest == .linux {
-            // Clipboard sharing through the SPICE agent port; Ubuntu Desktop's spice-vdagent picks it up
+        if guest == .linux || guest == .tinyMac {
+            // Clipboard sharing through the SPICE agent port; Ubuntu Desktop's and TinyMac's spice-vdagent pick it up
             let spice = VZSpiceAgentPortAttachment()
             spice.sharesClipboard = true
             let port = VZVirtioConsolePortConfiguration()
@@ -651,6 +676,8 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
                     try? LinuxGL.guestSetupScript.write(to: sharedURL.appendingPathComponent("Set Up 3D.sh"), atomically: true, encoding: .utf8)
                     status += ". GPU OpenGL: run sudo sh \"/mnt/Set Up 3D.sh\" once, then macaroon-gl <app>"
                 }
+            case .tinyMac:
+                status = "Running TinyMac. Files in Shared Folder appear in its Shared Folder."
             case .windows:
                 status = setupPhase == "media" ? "Installing Windows from Media.img (WinPE, unattended). The VM powers off when done." : "Running."
                 if setupPhase == nil {
@@ -1002,7 +1029,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             HStack {
                 Picker("Guest", selection: $vm.guest) {
-                    ForEach(GuestOS.allCases) { Text($0 == .macOS ? "Mac" : $0 == .linux ? "Linux" : "Windows").tag($0) }
+                    ForEach(GuestOS.allCases) { Text($0 == .macOS ? "Mac" : $0 == .windows ? "Windows" : $0.title).tag($0) }
                 }
                 .pickerStyle(.menu)
                 .fixedSize()
@@ -1015,6 +1042,10 @@ struct ContentView: View {
                     .disabled(vm.busy || vm.running)
                     Button("Download & Install") { Task { await vm.downloadAndInstall() } }
                         .disabled(vm.busy || vm.running || vm.selected == nil)
+                } else if vm.guest == .tinyMac {
+                    Button(vm.isInstalled ? "Reinstall TinyMac" : "Install TinyMac") { Task { await vm.installTinyMac() } }
+                        .help("Copies the image built by Tools/TinyMac/build.sh in as this VM's disk")
+                        .disabled(vm.busy || vm.running)
                 } else {
                     Picker("ISO", selection: $vm.selectedISO) {
                         if vm.isos.isEmpty { Text("Loading…").tag(InstallerISO?.none) }
@@ -1053,7 +1084,7 @@ struct ContentView: View {
                     Button("Run Command…") { runCommand() }
                         .disabled(!vm.running)
                 }
-                if vm.guest == .linux {
+                if vm.guest == .linux || vm.guest == .tinyMac {
                     Button("Paste") { vm.typeClipboard() }
                         .help("Types the Mac clipboard's text into Linux")
                         .disabled(!vm.running)

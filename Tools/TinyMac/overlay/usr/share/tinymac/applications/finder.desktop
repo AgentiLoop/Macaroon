@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Finder
+Exec=pcmanfm /home/mac
+Icon=system-file-manager

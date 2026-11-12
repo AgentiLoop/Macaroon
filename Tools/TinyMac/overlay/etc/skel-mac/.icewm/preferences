@@ -1,5 +1,6 @@
 # TinyMac: a Mac OS 8 style desktop. The task bar is the menu bar, at the top.
 Theme="Platinum/default.theme"
+ShowTaskBar=0
 TaskBarAtTop=1
 TaskBarShowStartMenu=1
 TaskBarShowWorkspaces=0

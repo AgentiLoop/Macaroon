@@ -19,9 +19,9 @@ cp -R /etc/apk/keys "$root/etc/apk/"
 
 apk add -q --root "$root" --initdb --no-cache \
     alpine-base linux-virt eudev doas \
-    xorg-server xf86-input-libinput xinit xsetroot \
+    xorg-server xf86-input-libinput xinit xsetroot xrandr \
     icewm xterm nedit xrdb font-dejavu spice-vdagent \
-    pcmanfm gvfs dbus adwaita-icon-theme
+    pcmanfm gvfs dbus adwaita-icon-theme xfce4-panel
 
 # Our files: theme, session, config.
 cp -R "$src/overlay/." "$root/"
