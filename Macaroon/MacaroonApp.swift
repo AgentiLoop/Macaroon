@@ -359,7 +359,9 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     static let ubuntuReleases = URL(string: "https://cdimage.ubuntu.com/ubuntu/releases/")!
     static let windowsPage = URL(string: "https://www.microsoft.com/en-us/software-download/windows11arm64")!
     static let msProfile = "606624d44113"
-    private let msSession = UUID().uuidString.lowercased()
+    /// Microsoft serves one link request per session, so each download gets a fresh, handshaken session.
+    private var msSession = UUID().uuidString.lowercased()
+    private var msEdition: String?
 
     /// Loads the Linux and Windows ISO lists together at launch, so switching guests later is instant.
     func loadISOCatalog() async {
@@ -432,18 +434,35 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         guard let edition = String(decoding: page, as: UTF8.self).firstMatch(of: try Regex(#"option value="(\d+)""#))?.output[1].substring else {
             throw NSError(domain: "Macaroon", code: 3, userInfo: [NSLocalizedDescriptionKey: "Microsoft's download page has no ARM64 edition."])
         }
-        _ = try? await URLSession.shared.data(from: URL(string: "https://vlscppe.microsoft.com/tags?org_id=y6jn8c31&session_id=\(msSession)")!)
-        let (data, _) = try await URLSession.shared.data(for: msRequest("getskuinformationbyproductedition?profile=\(Self.msProfile)&ProductEditionId=\(edition)&SKU=undefined&friendlyFileName=undefined"))
-        let skus = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["Skus"] as? [[String: Any]] ?? []
-        return skus.compactMap { sku in
+        msEdition = String(edition)
+        return try await windowsSKUs(edition: String(edition)).compactMap { sku in
             guard let id = sku["Id"] as? String, let language = sku["Language"] as? String else { return nil }
             let product = (sku["ProductDisplayName"] as? String) ?? "Windows 11 ARM64"
             return InstallerISO(title: "\(product) – \(language)", fileName: "Windows11-ARM64-\(language).iso", sku: id)
         }
     }
 
-    /// Microsoft often rejects non-browser link requests ("Sentinel"); nil means use the browser instead.
+    /// Starts a fresh Microsoft session the way Fido (github.com/pbatard/Fido) does: whitelist it through vlscppe,
+    /// pass the ov-df "Sentinel" anti-bot check (mdt.js gives w and rticks, then reply), then list the edition's SKUs.
+    private func windowsSKUs(edition: String) async throws -> [[String: Any]] {
+        let instance = "560dc9f3-1aa5-4a2f-b63c-9e18f8d0e175"
+        msSession = UUID().uuidString.lowercased()
+        _ = try? await URLSession.shared.data(from: URL(string: "https://vlscppe.microsoft.com/tags?org_id=y6jn8c31&session_id=\(msSession)")!)
+        let (script, _) = try await URLSession.shared.data(from: URL(string: "https://ov-df.microsoft.com/mdt.js?instanceId=\(instance)&PageId=si&session_id=\(msSession)")!)
+        let js = String(decoding: script, as: UTF8.self)
+        if let w = js.firstMatch(of: try Regex(#"[?&]w=([A-F0-9]+)"#))?.output[1].substring,
+           let rticks = js.firstMatch(of: try Regex(#"rticks="\+?(\d+)"#))?.output[1].substring {
+            let now = Int(Date().timeIntervalSince1970 * 1000)
+            _ = try? await URLSession.shared.data(from: URL(string: "https://ov-df.microsoft.com/?session_id=\(msSession)&CustomerId=\(instance)&PageId=si&w=\(w)&mdt=\(now)&rticks=\(rticks)")!)
+        }
+        let (data, _) = try await URLSession.shared.data(for: msRequest("getskuinformationbyproductedition?profile=\(Self.msProfile)&ProductEditionId=\(edition)&SKU=undefined&friendlyFileName=undefined"))
+        return (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["Skus"] as? [[String: Any]] ?? []
+    }
+
+    /// Direct ISO link for a SKU, on a new handshaken session (Microsoft processes one request per session).
+    /// Nil only if Microsoft still refuses; then the browser is the fallback.
     private func windowsDownloadURL(sku: String) async -> URL? {
+        if let edition = msEdition { _ = try? await windowsSKUs(edition: edition) }
         guard let (data, _) = try? await URLSession.shared.data(for: msRequest("GetProductDownloadLinksBySku?profile=\(Self.msProfile)&productEditionId=undefined&SKU=\(sku)&friendlyFileName=undefined")),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let options = json["ProductDownloadOptions"] as? [[String: Any]],
