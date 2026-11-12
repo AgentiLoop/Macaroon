@@ -142,6 +142,172 @@ enum DockApps {
     }
 }
 
+/// NeXTSTEP-style Dock icons, drawn in greys with black outlines and a hard drop shadow on a 48-unit grid:
+/// File Viewer, OmniWeb-style globe (Safari), NeXTmail envelope (Mail), Edit's page and pencil (TextEdit),
+/// Terminal's monitor, Calculator, Preferences' sliders (System Settings) and the Recycler. Other apps get
+/// their own icon in greyscale.
+enum NeXTIcons {
+    private static var r = NSRect.zero
+    private static func u(_ v: CGFloat) -> CGFloat { v * r.width / 48 }
+    private static func rect(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> NSRect {
+        NSRect(x: r.minX + u(x), y: r.minY + u(y), width: u(w), height: u(h))
+    }
+    private static func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: r.minX + u(x), y: r.minY + u(y)) }
+    private static func grey(_ w: CGFloat) -> NSColor { NSColor(calibratedWhite: w, alpha: 1) }
+    /// Fills a shape with a grey, outlines it in black; `shadow` first drops a dark copy down and right.
+    private static func shape(_ p: NSBezierPath, _ white: CGFloat, shadow: Bool = false, line: CGFloat = 1) {
+        if shadow {
+            let s = p.copy() as! NSBezierPath
+            s.transform(using: AffineTransform(translationByX: u(2), byY: -u(2)))
+            grey(0.15).setFill()
+            s.fill()
+        }
+        grey(white).setFill()
+        p.fill()
+        NSColor.black.setStroke()
+        p.lineWidth = line
+        p.stroke()
+    }
+    private static func box(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat, _ white: CGFloat, shadow: Bool = false) {
+        shape(NSBezierPath(rect: rect(x, y, w, h)), white, shadow: shadow)
+    }
+    private static func line(_ x1: CGFloat, _ y1: CGFloat, _ x2: CGFloat, _ y2: CGFloat, width: CGFloat = 1, white: CGFloat = 0) {
+        let p = NSBezierPath()
+        p.move(to: point(x1, y1)); p.line(to: point(x2, y2))
+        p.lineWidth = width
+        grey(white).setStroke()
+        p.stroke()
+    }
+
+    static func draw(app path: String, in area: NSRect) {
+        r = area
+        switch Bundle(path: path)?.bundleIdentifier {
+        case "com.apple.finder": drawNeXTIcon(NSHomeDirectory(), in: area)
+        case "com.apple.Safari": globe()
+        case "com.apple.mail": mail()
+        case "com.apple.TextEdit": edit()
+        case "com.apple.Terminal": terminal()
+        case "com.apple.calculator": calculator()
+        case "com.apple.systempreferences": preferences()
+        default: greyscale(NSWorkspace.shared.icon(forFile: path), in: area)
+        }
+    }
+
+    private static func globe() {
+        let ball = NSBezierPath(ovalIn: rect(5, 5, 38, 38))
+        shape(ball, 0.6, shadow: true)
+        NSGraphicsContext.saveGraphicsState()
+        ball.addClip()
+        grey(0.85).setFill() // highlight, top left
+        NSBezierPath(ovalIn: rect(9, 24, 14, 14)).fill()
+        NSColor.black.setStroke()
+        for w: CGFloat in [12, 26] { // meridians
+            let m = NSBezierPath(ovalIn: rect(24 - w / 2, 5, w, 38)); m.lineWidth = 1; m.stroke()
+        }
+        for y: CGFloat in [14, 24, 34] { line(5, y, 43, y) } // parallels
+        NSGraphicsContext.restoreGraphicsState()
+        ball.lineWidth = 1.5
+        ball.stroke()
+    }
+
+    private static func mail() {
+        box(4, 11, 40, 26, 0.9, shadow: true)
+        let flap = NSBezierPath()
+        flap.move(to: point(4, 37)); flap.line(to: point(24, 22)); flap.line(to: point(44, 37))
+        NSColor.black.setStroke(); flap.lineWidth = 1; flap.stroke()
+        line(4, 11, 18, 26); line(44, 11, 30, 26)
+        box(33, 28, 8, 7, 0.45) // stamp
+        line(34, 30, 40, 30, white: 0.8)
+    }
+
+    private static func edit() {
+        let page = NSBezierPath() // page with a folded corner
+        page.move(to: point(8, 4)); page.line(to: point(8, 44)); page.line(to: point(31, 44))
+        page.line(to: point(38, 37)); page.line(to: point(38, 4)); page.close()
+        shape(page, 1, shadow: true)
+        let fold = NSBezierPath()
+        fold.move(to: point(31, 44)); fold.line(to: point(31, 37)); fold.line(to: point(38, 37)); fold.close()
+        shape(fold, 0.7)
+        for y in stride(from: CGFloat(32), through: 10, by: -5) { line(12, y, 34, y, white: 0.5) }
+        let pencil = NSBezierPath() // a pencil lying across the page
+        pencil.move(to: point(20, 8)); pencil.line(to: point(42, 30)); pencil.line(to: point(46, 26))
+        pencil.line(to: point(24, 4)); pencil.close()
+        shape(pencil, 0.55)
+        let tip = NSBezierPath()
+        tip.move(to: point(20, 8)); tip.line(to: point(24, 4)); tip.line(to: point(17, 1)); tip.close()
+        shape(tip, 0.9)
+    }
+
+    private static func terminal() {
+        box(4, 12, 40, 32, 0.6, shadow: true) // monitor
+        box(8, 16, 32, 24, 0) // screen
+        (">_" as NSString).draw(at: point(11, 25), withAttributes: [.font: NSFont(name: "Courier-Bold", size: u(11)) ?? boldFont, .foregroundColor: NSColor.white])
+        box(18, 6, 12, 6, 0.45) // neck
+        box(10, 2, 28, 4, 0.6, shadow: true) // base
+    }
+
+    private static func calculator() {
+        box(9, 3, 30, 42, 0.5, shadow: true)
+        box(12, 34, 24, 8, 0.85) // display
+        ("42" as NSString).draw(at: point(25, 34.5), withAttributes: [.font: NSFont(name: "Helvetica-Bold", size: u(7)) ?? boldFont])
+        for row in 0..<4 {
+            for col in 0..<4 {
+                box(12 + CGFloat(col) * 6.2, 6 + CGFloat(row) * 6.6, 5, 5, col == 3 ? 0.25 : 0.85)
+            }
+        }
+    }
+
+    private static func preferences() {
+        box(4, 6, 40, 36, 0.7, shadow: true)
+        for (i, knob) in [CGFloat(14), 30, 21].enumerated() { // three slider tracks with bevelled knobs
+            let y = 33 - CGFloat(i) * 10
+            box(9, y, 30, 3, 0.25)
+            bevel(rect(knob, y - 3, 7, 9))
+        }
+    }
+
+    static func recycler(in area: NSRect, full: Bool) {
+        r = area
+        let bin = NSBezierPath() // a tapered can
+        bin.move(to: point(11, 38)); bin.line(to: point(15, 4)); bin.line(to: point(33, 4)); bin.line(to: point(37, 38)); bin.close()
+        shape(bin, 0.65, shadow: true)
+        for x: CGFloat in [18, 24, 30] { line(x, 8, x + (x - 24) * 0.25, 34, white: 0.4) } // ribs
+        box(8, 38, 32, 5, 0.75, shadow: true) // rim
+        if full { // crumpled paper sticking out
+            shape(NSBezierPath(ovalIn: rect(13, 40, 12, 7)), 1)
+            shape(NSBezierPath(ovalIn: rect(23, 41, 11, 6)), 0.9)
+        }
+        // The three-arrow recycling loop
+        let loop = NSBezierPath(ovalIn: rect(17, 15, 14, 14))
+        loop.lineWidth = u(2.5)
+        NSColor.black.setStroke()
+        loop.stroke()
+        for angle in stride(from: 0.0, to: 360.0, by: 120.0) {
+            let a = angle * .pi / 180, c = point(24, 22), radius = u(7)
+            let tip = NSPoint(x: c.x + radius * cos(a), y: c.y + radius * sin(a))
+            let arrow = NSBezierPath()
+            arrow.move(to: NSPoint(x: tip.x + u(3) * cos(a + .pi / 2), y: tip.y + u(3) * sin(a + .pi / 2)))
+            arrow.line(to: NSPoint(x: tip.x + u(3) * cos(a), y: tip.y + u(3) * sin(a)))
+            arrow.line(to: NSPoint(x: tip.x - u(3) * cos(a), y: tip.y - u(3) * sin(a)))
+            arrow.close()
+            NSColor.black.setFill()
+            arrow.fill()
+        }
+    }
+
+    /// Any other app: its own icon with the colour taken out, to sit with the NeXT greys.
+    private static func greyscale(_ icon: NSImage, in area: NSRect) {
+        let grey = NSImage(size: area.size, flipped: false) { bounds in
+            icon.draw(in: bounds)
+            NSColor.black.setFill()
+            bounds.fill(using: .saturation) // keep the brightness, drop the colour
+            icon.draw(in: bounds, from: .zero, operation: .destinationIn, fraction: 1) // restore the shape
+            return true
+        }
+        grey.draw(in: area)
+    }
+}
+
 final class Tile: NSView {
     let path: String? // nil: the Workspace tile (top) or the Recycler (bottom)
     let recycler: Bool
@@ -157,13 +323,13 @@ final class Tile: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         bevel(bounds)
+        let art = bounds.insetBy(dx: 8, dy: 8)
         if recycler {
             let full = (try? FileManager.default.contentsOfDirectory(atPath: trashPath))?.isEmpty == false
-            NSImage(named: full ? NSImage.trashFullName : NSImage.trashEmptyName)?.draw(in: bounds.insetBy(dx: 10, dy: 10))
-            return
+            return NeXTIcons.recycler(in: art, full: full)
         }
         guard let path else { return drawCube() }
-        NSWorkspace.shared.icon(forFile: path).draw(in: bounds.insetBy(dx: 8, dy: 8))
+        NeXTIcons.draw(app: path, in: art)
         let running = NSWorkspace.shared.runningApplications.contains { $0.bundleURL?.standardizedFileURL.path == path }
         if !running {
             ("…" as NSString).draw(at: NSPoint(x: 4, y: 2), withAttributes: [.font: boldFont, .foregroundColor: NSColor.black])
