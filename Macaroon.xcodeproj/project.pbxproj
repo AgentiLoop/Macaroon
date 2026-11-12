@@ -13,6 +13,7 @@
 		011606D6CE73F3ED5C2EDFA3 /* GuestAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 080E4893FEEBFE5AB2538A34 /* GuestAgent.swift */; };
 		7FED7E8386F2C395B1312A8D /* LinuxGL.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FB9079EC5101AFBFDBCAC2E /* LinuxGL.swift */; };
 		4C1A7E20B3D94F6A8E5D0A11 /* Payload in Resources */ = {isa = PBXBuildFile; fileRef = 4C1A7E20B3D94F6A8E5D0A10 /* Payload */; };
+		2B59F941E3816A4358A87CBD /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2B59F941E3816A4358A87CBC /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -25,7 +26,7 @@
 		080E4893FEEBFE5AB2538A34 /* GuestAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GuestAgent.swift"; sourceTree = "<group>"; };
 		3FB9079EC5101AFBFDBCAC2E /* LinuxGL.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LinuxGL.swift"; sourceTree = "<group>"; };
 		4C1A7E20B3D94F6A8E5D0A10 /* Payload */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Payload; sourceTree = "<group>"; };
-		2B59F941E3816A4358A87CBC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Assets.xcassets"; sourceTree = "<group>"; };
+		2B59F941E3816A4358A87CBC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -122,6 +123,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				4C1A7E20B3D94F6A8E5D0A11 /* Payload in Resources */,
+				2B59F941E3816A4358A87CBD /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
