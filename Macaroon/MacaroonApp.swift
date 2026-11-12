@@ -41,8 +41,9 @@ struct Snapshot: Identifiable, Hashable {
 
 /// macOS guests use Apple's Mac platform; Linux and Windows ARM boot from an ISO through the generic EFI platform.
 /// TinyMac is our own tiny Linux (Tools/TinyMac) on the same EFI platform, installed from its built disk image.
+/// TinyMacII is a second macOS VM pinned to macOS 27.2.1, given a NeXTSTEP look by a setup script in the shared folder.
 enum GuestOS: String, CaseIterable, Identifiable {
-    case macOS, linux, windows, tinyMac
+    case macOS, linux, windows, tinyMac, tinyMacII
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -50,6 +51,7 @@ enum GuestOS: String, CaseIterable, Identifiable {
         case .linux: "Linux"
         case .windows: "Windows ARM"
         case .tinyMac: "TinyMac"
+        case .tinyMacII: "TinyMacII"
         }
     }
     var folder: String {
@@ -58,8 +60,11 @@ enum GuestOS: String, CaseIterable, Identifiable {
         case .linux: "Linux"
         case .windows: "Windows"
         case .tinyMac: "TinyMac"
+        case .tinyMacII: "TinyMacII"
         }
     }
+    /// Runs on Apple's Mac platform (IPSW install, VZMacOSBootLoader).
+    var isMac: Bool { self == .macOS || self == .tinyMacII }
 }
 
 @MainActor
@@ -77,11 +82,52 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             loadSnapshots()
             status = isInstalled ? "\(guest.title) VM installed. Press Start." : guest == .macOS
                 ? "Choose a macOS IPSW from Apple, then Download & Install."
+                : guest == .tinyMacII ? "Download & Install macOS \(Self.tinyMacIIVersion) for TinyMacII."
                 : guest == .tinyMac ? "Press Install TinyMac." : "Choose an ARM64 \(guest.title) installer ISO."
             // Show the cached list for the new guest right away; fetch only if it was never loaded
             showISOs()
-            if guest != .macOS, isoCache[guest] == nil { Task { await loadISOCatalog(guest) } }
+            if guest == .linux || guest == .windows, isoCache[guest] == nil { Task { await loadISOCatalog(guest) } }
+            pickIPSW()
         }
+    }
+    /// The IPSW menu: every Virtual Mac IPSW for macOS, only the pinned release for TinyMacII.
+    static let tinyMacIIVersion = "27.2.1"
+    /// Run once inside TinyMacII: NeXTSTEP-style Dock on the right edge with big fixed tiles, dark graphite
+    /// appearance, solid NeXT grey desktop, high contrast borders and no transparency. Best effort: settings
+    /// macOS protects (accessibility) are skipped with a note instead of failing.
+    static let nextLookScript = #"""
+    #!/bin/zsh
+    # TinyMacII: give macOS a NeXTSTEP look. Safe to run again.
+    echo "Setting up the NeXT look…"
+    # The Dock: NeXT's was a column of 64-pt tiles on the right edge, always visible, no magnification.
+    defaults write com.apple.dock orientation -string right
+    defaults write com.apple.dock tilesize -int 64
+    defaults write com.apple.dock magnification -bool false
+    defaults write com.apple.dock autohide -bool false
+    defaults write com.apple.dock show-recents -bool false
+    defaults write com.apple.dock mineffect -string scale
+    # Dark grey, graphite accent and highlight, like NeXTSTEP's monochrome look
+    defaults write -g AppleInterfaceStyle -string Dark
+    defaults write -g AppleAccentColor -int -1
+    defaults write -g AppleHighlightColor -string "0.847059 0.847059 0.862745 Graphite"
+    defaults write -g AppleReduceDesktopTinting -bool true
+    defaults write -g NSTableViewDefaultSizeMode -int 1
+    # Square, bordered, opaque windows (needs Privacy & Security > Full Disk Access for Terminal on some releases)
+    defaults write com.apple.universalaccess reduceTransparency -bool true 2>/dev/null || echo "Skipped: Reduce Transparency (turn it on in System Settings > Accessibility > Display)"
+    defaults write com.apple.universalaccess increaseContrast -bool true 2>/dev/null || echo "Skipped: Increase Contrast (turn it on in System Settings > Accessibility > Display)"
+    # Solid NeXT grey desktop (#555555)
+    wall="$HOME/Pictures/NeXT Grey.png"
+    mkdir -p "$HOME/Pictures"
+    echo "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAD0lEQVR4nGMIxQEYhpYEAOkwP8EcYhReAAAAAElFTkSuQmCC" | base64 -D > "$wall"
+    osascript -e "tell application \"System Events\" to set picture of every desktop to POSIX file \"$wall\"" \
+        || echo "Skipped: desktop picture (allow Terminal to control System Events, then run again)"
+    killall Dock SystemUIServer 2>/dev/null
+    echo "Done. Log out and back in for the dark appearance to reach every app."
+    """#
+    var ipswChoices: [RestoreImage] { guest == .tinyMacII ? images.filter { $0.version == Self.tinyMacIIVersion } : images }
+    private func pickIPSW() {
+        if let selected, ipswChoices.contains(selected) { return }
+        selected = ipswChoices.first
     }
     @Published var isos: [InstallerISO] = []
     @Published var selectedISO: InstallerISO? {
@@ -132,7 +178,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             var found: [String: RestoreImage] = [:]
             Self.collectVirtualMacImages(plist, insideVirtualMac: false, into: &found)
             images = found.values.sorted { $0.version.compare($1.version, options: .numeric) == .orderedDescending }
-            selected = images.first
+            pickIPSW()
             if guest == .macOS { status = isInstalled ? "VM installed. Press Start." : "Choose a macOS IPSW from Apple, then Download & Install." }
         } catch {
             status = "Could not load Apple's IPSW list: \(error.localizedDescription)"
@@ -643,7 +689,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
 
     private func makeMachine() throws -> VZVirtualMachine {
         let config: VZVirtualMachineConfiguration
-        if guest == .macOS {
+        if guest.isMac {
             let platform = VZMacPlatformConfiguration()
             guard let model = VZMacHardwareModel(dataRepresentation: try Data(contentsOf: modelURL)),
                   let id = VZMacMachineIdentifier(dataRepresentation: try Data(contentsOf: machineIDURL)) else {
@@ -678,6 +724,11 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
                 }
             case .tinyMac:
                 status = "Running TinyMac. Files in Shared Folder appear in its Shared Folder."
+            case .tinyMacII:
+                let script = sharedURL.appendingPathComponent("Set Up NeXT Look.command")
+                try? Self.nextLookScript.write(to: script, atomically: true, encoding: .utf8)
+                try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+                status = "Running TinyMacII. For the NeXT look, double-click Set Up NeXT Look.command in /Volumes/My Shared Files."
             case .windows:
                 status = setupPhase == "media" ? "Installing Windows from Media.img (WinPE, unattended). The VM powers off when done." : "Running."
                 if setupPhase == nil {
@@ -765,7 +816,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
 
     // MARK: Snapshots (APFS clones of the disk + aux storage, plus saved running state)
 
-    private var vmFiles: [String] { ["Disk.img", guest == .macOS ? "AuxiliaryStorage" : "NVRAM"] }
+    private var vmFiles: [String] { ["Disk.img", guest.isMac ? "AuxiliaryStorage" : "NVRAM"] }
     private let stateFile = "State.vzvmsave"
 
     func loadSnapshots() {
@@ -1034,9 +1085,9 @@ struct ContentView: View {
                 .pickerStyle(.menu)
                 .fixedSize()
                 .disabled(vm.busy || vm.running)
-                if vm.guest == .macOS {
+                if vm.guest.isMac {
                     Picker("IPSW", selection: $vm.selected) {
-                        ForEach(vm.images) { Text($0.title).tag(Optional($0)) }
+                        ForEach(vm.ipswChoices) { Text($0.title).tag(Optional($0)) }
                     }
                     .frame(maxWidth: 320)
                     .disabled(vm.busy || vm.running)
@@ -1094,11 +1145,11 @@ struct ContentView: View {
 
             ZStack {
                 if let machine = vm.machine, vm.running {
-                    VMView(machine: machine, retina: vm.guest == .macOS, windowsAgent: vm.guest == .windows)
+                    VMView(machine: machine, retina: vm.guest.isMac, windowsAgent: vm.guest == .windows)
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "desktopcomputer").font(.system(size: 64))
-                        Text(vm.isInstalled ? "Press Start to boot the VM." : vm.guest == .macOS
+                        Text(vm.isInstalled ? "Press Start to boot the VM." : vm.guest.isMac
                              ? "Pick an IPSW and press Download & Install."
                              : "Pick an ISO and press Download & Install, or use Install from ISO… with your own ARM64 ISO.")
                         Text("Drag an .app here to copy it into the VM.").foregroundStyle(.secondary)
