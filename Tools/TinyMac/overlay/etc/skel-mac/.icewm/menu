@@ -1,0 +1,9 @@
+# The Macaroon menu (top left), like the Apple menu.
+prog "Finder" - xfe /home/mac
+prog "Shared Folder" - xfe /home/mac/Shared
+prog "SimpleText" - nedit
+prog "Terminal" - xterm
+separator
+menu "Control Panels" - {
+    prog "Appearance" - xterm -e vi /home/mac/.icewm/preferences
+}

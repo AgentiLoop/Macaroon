@@ -1,0 +1,7 @@
+#!/bin/sh
+# The Platinum desktop: IceWM with the menu bar at the top, Mac-style clipboard sharing through spice-vdagent.
+export DISPLAY=:0
+xsetroot -solid '#666699' -cursor_name left_ptr
+xrdb -merge $HOME/.Xresources
+spice-vdagent >/dev/null 2>&1
+exec icewm-session

@@ -1,0 +1,77 @@
+# Platinum: Mac OS 8 look for IceWM. Pinstriped title bars, close box on the left,
+# zoom and WindowShade boxes on the right, grey menus with a dark blue highlight.
+ThemeDescription="Platinum (Mac OS 8)"
+ThemeAuthor="Macaroon"
+Look=flat
+TitleBarHeight=20
+TitleBarJustify=50
+TitleButtonsSupported="xmr"
+TitleButtonsLeft="x"
+TitleButtonsRight="mr"
+BorderSizeX=2
+BorderSizeY=2
+DlgBorderSizeX=2
+DlgBorderSizeY=2
+CornerSizeX=12
+CornerSizeY=12
+MenuIconSize=16
+SmallIconSize=16
+LargeIconSize=32
+ColorActiveBorder="rgb:44/44/44"
+ColorNormalBorder="rgb:88/88/88"
+ColorActiveTitleBar="rgb:DD/DD/DD"
+ColorNormalTitleBar="rgb:EE/EE/EE"
+ColorActiveTitleBarText="rgb:00/00/00"
+ColorNormalTitleBarText="rgb:88/88/88"
+ColorDialog="rgb:DD/DD/DD"
+ColorNormalButton="rgb:DD/DD/DD"
+ColorNormalButtonText="rgb:00/00/00"
+ColorActiveButton="rgb:BB/BB/BB"
+ColorActiveButtonText="rgb:00/00/00"
+ColorToolButton="rgb:DD/DD/DD"
+ColorToolButtonText="rgb:00/00/00"
+ColorDefaultTaskBar="rgb:DD/DD/DD"
+ColorNormalTaskBarApp="rgb:DD/DD/DD"
+ColorNormalTaskBarAppText="rgb:00/00/00"
+ColorActiveTaskBarApp="rgb:BB/BB/BB"
+ColorActiveTaskBarAppText="rgb:00/00/00"
+ColorMinimizedTaskBarApp="rgb:DD/DD/DD"
+ColorMinimizedTaskBarAppText="rgb:66/66/66"
+ColorInvisibleTaskBarAppText="rgb:88/88/88"
+ColorClock="rgb:DD/DD/DD"
+ColorClockText="rgb:00/00/00"
+ColorNormalMenu="rgb:DD/DD/DD"
+ColorActiveMenuItem="rgb:33/33/99"
+ColorNormalMenuItemText="rgb:00/00/00"
+ColorActiveMenuItemText="rgb:FF/FF/FF"
+ColorDisabledMenuItemText="rgb:99/99/99"
+ColorDisabledMenuItemShadow="rgb:FF/FF/FF"
+ColorMoveSizeStatus="rgb:DD/DD/DD"
+ColorMoveSizeStatusText="rgb:00/00/00"
+ColorQuickSwitch="rgb:DD/DD/DD"
+ColorQuickSwitchText="rgb:00/00/00"
+ColorToolTip="rgb:FF/FF/CC"
+ColorToolTipText="rgb:00/00/00"
+ColorListBox="rgb:FF/FF/FF"
+ColorListBoxText="rgb:00/00/00"
+ColorListBoxSelection="rgb:33/33/99"
+ColorListBoxSelectionText="rgb:FF/FF/FF"
+ColorInput="rgb:FF/FF/FF"
+ColorInputText="rgb:00/00/00"
+ColorInputSelection="rgb:CC/CC/FF"
+ColorInputSelectionText="rgb:00/00/00"
+ColorScrollBar="rgb:DD/DD/DD"
+ColorScrollBarSlider="rgb:99/99/CC"
+ColorScrollBarButton="rgb:DD/DD/DD"
+ColorScrollBarArrow="rgb:00/00/00"
+ColorScrollBarButtonArrow="rgb:00/00/00"
+TitleFontNameXft="DejaVu Sans:size=9:bold"
+MenuFontNameXft="DejaVu Sans:size=9:bold"
+NormalTaskBarFontNameXft="DejaVu Sans:size=9:bold"
+ActiveTaskBarFontNameXft="DejaVu Sans:size=9:bold"
+StatusFontNameXft="DejaVu Sans:size=9"
+ClockFontNameXft="DejaVu Sans:size=9:bold"
+ToolTipFontNameXft="DejaVu Sans:size=9"
+ListBoxFontNameXft="DejaVu Sans:size=9"
+QuickSwitchFontNameXft="DejaVu Sans:size=10:bold"
+DesktopBackgroundColor="rgb:66/66/99"

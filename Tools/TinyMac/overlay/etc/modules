@@ -1,0 +1,8 @@
+virtio_gpu
+virtio_net
+virtio_console
+virtiofs
+xhci_pci
+usbhid
+hid_generic
+evdev

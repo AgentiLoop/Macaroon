@@ -1,0 +1,23 @@
+/* XPM */
+static char * icewm_xpm[] = {
+"16 16 4 1",
+" 	c None",
+"R	c #B04A74",
+"c	c #FFF4E0",
+"r	c #E87FA8",
+"                ",
+"                ",
+"   rrrrrrrrrr   ",
+"  rrrrrrrrrrrr  ",
+" rrrrrrrrrrrrrr ",
+" rrrrrrrrrrrrrr ",
+" RRRRRRRRRRRRRR ",
+"  cccccccccccc  ",
+"  cccccccccccc  ",
+" RRRRRRRRRRRRRR ",
+" rrrrrrrrrrrrrr ",
+" rrrrrrrrrrrrrr ",
+"  rrrrrrrrrrrr  ",
+"   rrrrrrrrrr   ",
+"                ",
+"                "};
