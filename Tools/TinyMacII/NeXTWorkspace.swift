@@ -47,7 +47,9 @@ func isFolder(_ path: String) -> Bool {
 
 func makePanel() -> NSPanel {
     let p = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-    p.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)))
+    // The widget layer (as in StarPlayrX's torn-off panel): desktop icons + 2, where macOS puts its own desktop
+    // widgets. Behind every app window, on every Space, staying put for Show Desktop.
+    p.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 2)
     p.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
     p.hidesOnDeactivate = false
     p.isReleasedWhenClosed = false
