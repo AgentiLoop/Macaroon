@@ -730,6 +730,11 @@ final class FileViewer: NSObject, NSWindowDelegate, NSBrowserDelegate {
         pathView.go = { [weak self] in self?.go($0) }
 
         browser.setCellClass(CenteredBrowserCell.self)
+        // NeXT's light grey columns instead of white; in Dark Mode a lighter charcoal than the default
+        browser.backgroundColor = NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? NSColor(calibratedWhite: 0.3, alpha: 1) : NSColor(calibratedWhite: 0.8, alpha: 1)
+        }
         browser.delegate = self
         browser.target = self
         browser.action = #selector(selectionChanged)
