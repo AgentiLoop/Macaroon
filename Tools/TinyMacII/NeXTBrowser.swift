@@ -96,6 +96,11 @@ final class StatusLine: NSView {
     }
 }
 
+/// A square, sunken white well (NeXT's text field look) that holds the address field.
+final class SunkenWell: NSView {
+    override func draw(_ dirtyRect: NSRect) { bevel(bounds, sunken: true, color: .white) }
+}
+
 // MARK: NeXT window
 
 final class NeXTWindow: NSWindow {
@@ -126,6 +131,15 @@ final class NeXTWindow: NSWindow {
     override func becomeKey() { super.becomeKey(); titleBar.needsDisplay = true }
     override func resignKey() { super.resignKey(); titleBar.needsDisplay = true }
     override func performClose(_ sender: Any?) { close() }
+    /// A borderless window isn't made key by a click when its app was opened in the background (from NeXT
+    /// Workspace's Dock, which never activates itself), so typing went nowhere. Take the click as activation.
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown, !isKeyWindow {
+            NSApp.activate(ignoringOtherApps: true)
+            makeKeyAndOrderFront(nil)
+        }
+        super.sendEvent(event)
+    }
 }
 
 final class TitleBar: NSView {
@@ -197,29 +211,54 @@ final class ResizeBar: NSView {
 
 // MARK: Browser window
 
-final class Browser: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+/// The page view. Pages like DuckDuckGo focus their own search box as they load, which made WebKit take the
+/// keyboard from the address field mid-typing; it only takes it now when the user clicks in the page or tabs in.
+final class PageView: WKWebView {
+    var addressActive: () -> Bool = { false }
+    var giveBackFocus: () -> Void = {}
+    var userFocused: () -> Void = {}
+
+    override func becomeFirstResponder() -> Bool {
+        let user: Bool
+        switch NSApp.currentEvent?.type {
+        case .leftMouseDown?, .rightMouseDown?, .otherMouseDown?, .keyDown?: user = true
+        default: user = false
+        }
+        if !user, addressActive() {
+            DispatchQueue.main.async { self.giveBackFocus() }
+            return false
+        }
+        if user { userFocused() }
+        return super.becomeFirstResponder()
+    }
+}
+
+final class Browser: NSObject, NSWindowDelegate, NSTextFieldDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     static var all: [Browser] = []
     static var front: Browser? { all.first { $0.window.isKeyWindow } ?? all.last }
     static var lastFind = ""
 
     let window = NeXTWindow(body: NSSize(width: 1000, height: 680))
-    let web: WKWebView
+    let web: PageView
     let field = NSTextField()
     let status = StatusLine()
     private var back: NeXTButton!, forward: NeXTButton!, reload: NeXTButton!
     private var watchers: [NSKeyValueObservation] = []
+    /// The user is in the address field (from a click, Open Location or a new window) until they go or click the page.
+    private var addressActive = false
 
     @discardableResult
     static func open(_ url: URL?, configuration: WKWebViewConfiguration = WKWebViewConfiguration()) -> Browser {
         let browser = Browser(url, configuration: configuration)
         all.append(browser)
-        NSApp.activate()
+        NSApp.activate(ignoringOtherApps: true)
         browser.window.makeKeyAndOrderFront(nil)
+        if url == nil || url == homePage { browser.openLocation() } // a new window starts in the address field
         return browser
     }
 
     private init(_ url: URL?, configuration: WKWebViewConfiguration) {
-        web = WKWebView(frame: .zero, configuration: configuration)
+        web = PageView(frame: .zero, configuration: configuration)
         super.init()
         let body = window.body, w = body.bounds.width, h = body.bounds.height
         let toolbar: CGFloat = 36, statusHeight: CGFloat = 22
@@ -239,19 +278,37 @@ final class Browser: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDeleg
             body.addSubview(button)
             x += width + 4
         }
-        field.frame = NSRect(x: x + 6, y: h - toolbar + 6, width: w - x - 12, height: 24)
-        field.autoresizingMask = [.width, .minYMargin]
+        // Square NeXT text field: a sunken white well with the borderless field inside it
+        let well = SunkenWell(frame: NSRect(x: x + 6, y: h - toolbar + 6, width: w - x - 12, height: 24))
+        well.autoresizingMask = [.width, .minYMargin]
+        body.addSubview(well)
+        field.frame = well.bounds.insetBy(dx: 3, dy: 3)
+        field.autoresizingMask = [.width, .height]
         field.font = font
-        field.isBezeled = true
-        field.bezelStyle = .squareBezel
+        field.isBezeled = false
+        field.isBordered = false
+        field.drawsBackground = true
+        field.backgroundColor = .white
+        field.focusRingType = .none
+        field.cell?.isScrollable = true
+        field.cell?.wraps = false
         field.placeholderString = "Type a web address or search words"
         field.target = self
         field.action = #selector(go)
-        body.addSubview(field)
+        field.delegate = self
+        well.addSubview(field)
 
         web.frame = NSRect(x: 0, y: statusHeight, width: w, height: h - toolbar - statusHeight)
         web.autoresizingMask = [.width, .height]
         web.navigationDelegate = self
+        web.addressActive = { [weak self] in self?.addressActive ?? false }
+        web.userFocused = { [weak self] in self?.addressActive = false }
+        web.giveBackFocus = { [weak self] in
+            guard let self else { return }
+            self.window.makeFirstResponder(self.field)
+            let end = self.field.stringValue.utf16.count
+            self.field.currentEditor()?.selectedRange = NSRange(location: end, length: 0)
+        }
         web.uiDelegate = self
         web.allowsBackForwardNavigationGestures = true
         body.addSubview(web)
@@ -288,13 +345,17 @@ final class Browser: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDeleg
 
     @objc func go() {
         guard let url = address(field.stringValue) else { return NSSound.beep() }
+        addressActive = false
         web.load(URLRequest(url: url))
         window.makeFirstResponder(web)
     }
 
     func reloadOrStop() { if web.isLoading { web.stopLoading() } else { web.reload() } }
 
+    func controlTextDidBeginEditing(_ obj: Notification) { addressActive = true }
+
     func openLocation() {
+        addressActive = true
         window.makeFirstResponder(field)
         field.currentEditor()?.selectAll(nil)
     }
