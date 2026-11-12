@@ -212,6 +212,34 @@ final class ResizeBar: NSView {
 
 // MARK: Browser window
 
+/// NeXT scrollers for every page, matching the File Viewer: dark grey track, bevelled grey knob, square arrow
+/// buttons with black triangles, both at the bottom (vertical) or left (horizontal) end.
+let scrollbarCSS: String = {
+    func arrow(_ points: String) -> String {
+        "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8'><polygon points='\(points)' fill='black'/></svg>\")"
+    }
+    let bevel = "background-color:#aaa;border-style:solid;border-width:1px;border-color:#fff #000 #000 #fff;box-shadow:inset -1px -1px 0 #555;"
+    return """
+    ::-webkit-scrollbar{width:18px;height:18px;background:#555}
+    ::-webkit-scrollbar-track{background:#555}
+    ::-webkit-scrollbar-thumb{\(bevel)border-radius:0;min-height:18px;min-width:18px}
+    ::-webkit-scrollbar-corner{background:#aaa}
+    ::-webkit-scrollbar-button{display:none}
+    ::-webkit-scrollbar-button:vertical:end:decrement,::-webkit-scrollbar-button:vertical:end:increment,
+    ::-webkit-scrollbar-button:horizontal:start:decrement,::-webkit-scrollbar-button:horizontal:start:increment
+    {display:block;width:18px;height:18px;\(bevel)background-repeat:no-repeat;background-position:center}
+    ::-webkit-scrollbar-button:vertical:end:decrement{background-image:\(arrow("0,7 4,1 8,7"))}
+    ::-webkit-scrollbar-button:vertical:end:increment{background-image:\(arrow("0,1 4,7 8,1"))}
+    ::-webkit-scrollbar-button:horizontal:start:decrement{background-image:\(arrow("7,0 1,4 7,8"))}
+    ::-webkit-scrollbar-button:horizontal:start:increment{background-image:\(arrow("1,0 7,4 1,8"))}
+    """
+}()
+
+let scrollbarScript = WKUserScript(source: """
+    (function(){var s=document.createElement('style');s.textContent=\(String(data: try! JSONEncoder().encode(scrollbarCSS), encoding: .utf8)!);
+    (document.head||document.documentElement).appendChild(s);})();
+    """, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+
 /// The page view. Pages like DuckDuckGo focus their own search box as they load, which made WebKit take the
 /// keyboard from the address field mid-typing; it only takes it now when the user clicks in the page or tabs in.
 final class PageView: WKWebView {
@@ -259,6 +287,8 @@ final class Browser: NSObject, NSWindowDelegate, NSTextFieldDelegate, WKNavigati
     }
 
     private init(_ url: URL?, configuration: WKWebViewConfiguration) {
+        let controller = configuration.userContentController // shared with pop-ups, so add the style once
+        if !controller.userScripts.contains(where: { $0.source == scrollbarScript.source }) { controller.addUserScript(scrollbarScript) }
         web = PageView(frame: .zero, configuration: configuration)
         super.init()
         let body = window.body, w = body.bounds.width, h = body.bounds.height
