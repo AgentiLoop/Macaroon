@@ -527,8 +527,6 @@ final class Row: NSView {
     var highlighted = false { didSet { needsDisplay = true } }
     var closeBox = false { didSet { needsDisplay = true } }
     /// The main menu's level toggle in the top right of its title: filled = floats above apps, hollow = among them.
-    var levelToggle = false { didSet { needsDisplay = true } }
-    var toggleLevel: () -> Void = {}
     var action: (Row) -> Void = { _ in }
     var moved: () -> Void = {}
     var close: () -> Void = {}
@@ -557,12 +555,6 @@ final class Row: NSView {
                 NSColor.black.setStroke()
                 x.lineWidth = 1.5
                 x.stroke()
-            }
-            if levelToggle {
-                bevel(closeBoxRect)
-                let mark = NSBezierPath(rect: closeBoxRect.insetBy(dx: 4.5, dy: 4.5))
-                NSColor.black.set()
-                if MenuLevel.floating { mark.fill() } else { mark.stroke() }
             }
             return
         }
@@ -598,7 +590,6 @@ final class Row: NSView {
         window?.orderFrontRegardless() // among app windows, a click brings the menu forward
         let inBox = closeBoxRect.contains(convert(event.locationInWindow, from: nil))
         if closeBox, inBox { return close() }
-        if levelToggle, inBox { return toggleLevel() }
         // Drag the column by its title
         guard let window else { return }
         let start = NSEvent.mouseLocation, origin = window.frame.origin
@@ -613,19 +604,16 @@ final class Row: NSView {
     }
 }
 
-/// Where the main menu and its attached submenus sit: floating above app windows (the default, like NeXTSTEP)
-/// or on the same level as apps. Torn-off menus always float. Saved between launches.
+/// Every menu floats above app windows, on every Space, as on NeXTSTEP: the main menu, its attached submenus
+/// and torn-off menus.
 enum MenuLevel {
-    static var floating: Bool {
-        get { UserDefaults.standard.object(forKey: "MenuFloats") as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: "MenuFloats") }
-    }
-    static var level: NSWindow.Level { floating ? .floating : .normal }
+    static let level = NSWindow.Level.floating
+    static let behavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
 }
 
 /// One menu column. Submenus open as attached columns to the right; dragging one tears it off.
-/// As on NeXTSTEP, a torn-off menu stays until its close box is clicked: it belongs to its app, hides while
-/// another app is active and comes back when its app is active again; it goes away when the app quits.
+/// As on NeXTSTEP, a torn-off menu gets a close box and stays on screen, floating, until that box is clicked,
+/// whichever app is active.
 final class MenuColumn {
     static var tornOff: [MenuColumn] = []
     /// The app whose menus are showing (its process id); a menu torn off now belongs to it.
@@ -643,7 +631,8 @@ final class MenuColumn {
     init(title: String, isMain: Bool = false) {
         self.title = title
         self.isMain = isMain
-        if isMain { panel.level = MenuLevel.level }
+        panel.level = MenuLevel.level
+        panel.collectionBehavior = MenuLevel.behavior
     }
 
     func build(_ entries: [Entry]) {
@@ -651,13 +640,6 @@ final class MenuColumn {
         header.closeBox = torn
         header.moved = { [weak self] in self?.moved() }
         header.close = { [weak self] in self?.close() }
-        header.levelToggle = isMain
-        header.toggleLevel = { [weak self] in
-            MenuLevel.floating.toggle()
-            var column = self
-            while let c = column { c.panel.level = MenuLevel.level; c.panel.orderFrontRegardless(); column = c.child }
-            header.needsDisplay = true
-        }
         rows = [header]
         for entry in entries {
             switch entry.kind {
@@ -733,10 +715,6 @@ final class MenuColumn {
             parent = nil
             MenuColumn.tornOff.append(self)
             rows.first?.closeBox = true
-            // Torn-off menus float above app windows (NeXTSTEP kept them on top), on every Space
-            panel.level = .floating
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-            child?.panel.level = .floating
         }
         child?.place()
     }
@@ -775,10 +753,6 @@ final class MainMenu {
             self?.app = app
             self?.reload()
         }
-        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { note in
-            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
-            for torn in MenuColumn.tornOff where torn.owner == app.processIdentifier { torn.close() } // its app quit
-        }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.app = .current
             self?.reload()
@@ -793,12 +767,9 @@ final class MainMenu {
 
     func reload() {
         column.closeChild()
-        // Torn-off menus: the previous app's hide, this app's come back
-        let owner = app?.processIdentifier ?? getpid()
-        MenuColumn.activeOwner = owner
-        for torn in MenuColumn.tornOff {
-            if torn.owner == owner { torn.panel.orderFrontRegardless() } else { torn.closeChild(); torn.panel.orderOut(nil) }
-        }
+        // Torn-off menus stay up across app switches (only their close box removes them); keep them on top
+        MenuColumn.activeOwner = app?.processIdentifier ?? getpid()
+        for torn in MenuColumn.tornOff { torn.panel.orderFrontRegardless() }
         guard let app, app != .current else {
             column.title = "Workspace"
             return column.build(Self.workspaceEntries)
