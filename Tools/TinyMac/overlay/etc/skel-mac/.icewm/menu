@@ -5,6 +5,7 @@ prog "Trash" user-trash pcmanfm trash:///
 separator
 prog "SimpleText" accessories-text-editor simpletext
 prog "Internet" web-browser internet
+prog "Calculator" accessories-calculator calculator
 prog "Terminal" utilities-terminal xterm
 separator
 menu "Control Panels" preferences-desktop {
