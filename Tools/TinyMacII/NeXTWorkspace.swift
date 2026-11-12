@@ -4,7 +4,7 @@
 // • Main menu: vertical, top left. Submenus cascade to the right as more columns; drag a submenu by its black
 //   title to tear it off (it gets a close box). Shows the front app's real menus through Accessibility
 //   (needs Privacy & Security > Accessibility), or the Workspace's own menus when a File Viewer is in front.
-// • File Viewer: shelf, icon path, column browser (NeXT's NSBrowser). Inspector shows the selection's details.
+// • File Viewer: shelf, icon path, NeXT-drawn column browser. Inspector shows the selection's details.
 import AppKit
 import ApplicationServices
 
@@ -20,14 +20,17 @@ let trashPath = (NSHomeDirectory() as NSString).appendingPathComponent(".Trash")
 func fill(_ color: NSColor, _ rect: NSRect) { color.setFill(); rect.fill() }
 
 /// NeXT's raised bevel: white top and left edges, black bottom and right, dark grey inner shadow.
+/// Works in flipped views too (the browser), where "top" is the low y.
 func bevel(_ r: NSRect) {
+    let flipped = NSGraphicsContext.current?.isFlipped == true
+    let top = flipped ? r.minY : r.maxY - 1, bottom = flipped ? r.maxY - 1 : r.minY, inner = flipped ? r.maxY - 2 : r.minY + 1
     fill(face, r)
-    fill(.white, NSRect(x: r.minX, y: r.maxY - 1, width: r.width, height: 1))
+    fill(.white, NSRect(x: r.minX, y: top, width: r.width, height: 1))
     fill(.white, NSRect(x: r.minX, y: r.minY, width: 1, height: r.height))
-    fill(.black, NSRect(x: r.minX, y: r.minY, width: r.width, height: 1))
+    fill(.black, NSRect(x: r.minX, y: bottom, width: r.width, height: 1))
     fill(.black, NSRect(x: r.maxX - 1, y: r.minY, width: 1, height: r.height))
     let shade = NSColor(calibratedWhite: 0.333, alpha: 1)
-    fill(shade, NSRect(x: r.minX + 1, y: r.minY + 1, width: r.width - 2, height: 1))
+    fill(shade, NSRect(x: r.minX + 1, y: inner, width: r.width - 2, height: 1))
     fill(shade, NSRect(x: r.maxX - 2, y: r.minY + 1, width: 1, height: r.height - 2))
 }
 
@@ -698,28 +701,254 @@ final class PathView: NSView {
     }
 }
 
-/// Browser rows draw their text at the top of the row; centre it vertically so it lines up with the arrows.
-final class CenteredBrowserCell: NSTextFieldCell {
-    override func titleRect(forBounds rect: NSRect) -> NSRect {
-        var r = super.titleRect(forBounds: rect)
-        let h = attributedStringValue.size().height
-        if h < r.height { r.origin.y += floor((r.height - h) / 2); r.size.height = h }
-        return r
+/// A filled black triangle, NeXT's arrow: on browser rows that open a folder and on scroller buttons.
+func triangle(in r: NSRect, pointing direction: Character) {
+    let t = NSBezierPath()
+    switch direction {
+    case "<": t.move(to: NSPoint(x: r.maxX, y: r.minY)); t.line(to: NSPoint(x: r.minX, y: r.midY)); t.line(to: NSPoint(x: r.maxX, y: r.maxY))
+    case "^": t.move(to: NSPoint(x: r.minX, y: r.maxY)); t.line(to: NSPoint(x: r.midX, y: r.minY)); t.line(to: NSPoint(x: r.maxX, y: r.maxY))
+    case "v": t.move(to: NSPoint(x: r.minX, y: r.minY)); t.line(to: NSPoint(x: r.midX, y: r.maxY)); t.line(to: NSPoint(x: r.maxX, y: r.minY))
+    default: t.move(to: NSPoint(x: r.minX, y: r.minY)); t.line(to: NSPoint(x: r.maxX, y: r.midY)); t.line(to: NSPoint(x: r.minX, y: r.maxY))
     }
-    override func drawInterior(withFrame frame: NSRect, in view: NSView) {
-        super.drawInterior(withFrame: titleRect(forBounds: frame), in: view)
+    t.close()
+    NSColor.black.setFill()
+    t.fill()
+}
+
+/// NeXTSTEP's column browser, drawn the NeXT way: grey columns, black Helvetica, the selection in white, a black
+/// arrow on folders, scrollers on the left with both arrow buttons at the bottom, and a horizontal scroller on top.
+final class NeXTBrowser: NSView {
+    static let scrollerSize: CGFloat = 18
+    var children: (String) -> [String] = { _ in [] }
+    var onSelect: () -> Void = {}
+    var onOpen: () -> Void = {}
+    let visible = 4
+    private(set) var folders = ["/"] // column i lists the contents of folders[i]
+    private var columns: [BrowserColumn] = []
+    private var first = 0 // leftmost visible column
+    override var isFlipped: Bool { true }
+
+    /// Opens the columns down to `target`, selecting each step (and `target` itself).
+    func load(_ target: String) {
+        folders = ["/"]
+        var selections: [IndexSet] = []
+        var parent = "/"
+        for component in (target as NSString).pathComponents.dropFirst() {
+            let p = (parent as NSString).appendingPathComponent(component)
+            guard let i = children(parent).firstIndex(of: p) else { break }
+            selections.append([i])
+            guard isFolder(p) else { break }
+            folders.append(p)
+            parent = p
+        }
+        columns.forEach { $0.removeFromSuperview() }
+        columns = folders.indices.map { i in makeColumn(i, selected: i < selections.count ? selections[i] : []) }
+        first = max(0, folders.count - visible)
+        layoutColumns()
+        columns.forEach { $0.reveal() }
+    }
+
+    private func makeColumn(_ i: Int, selected: IndexSet) -> BrowserColumn {
+        let column = BrowserColumn(items: children(folders[i]))
+        column.browser = self
+        column.index = i
+        column.selected = selected
+        addSubview(column)
+        return column
+    }
+
+    /// A click in a column: select those rows, close the columns after it, open a column for a single folder.
+    func select(_ rows: IndexSet, in i: Int) {
+        columns[i].selected = rows
+        columns[(i + 1)...].forEach { $0.removeFromSuperview() }
+        columns.removeSubrange((i + 1)...)
+        folders.removeSubrange((i + 1)...)
+        if rows.count == 1, let row = rows.first, isFolder(columns[i].items[row]) {
+            folders.append(columns[i].items[row])
+            columns.append(makeColumn(i + 1, selected: []))
+        }
+        first = max(0, folders.count - visible)
+        layoutColumns()
+        onSelect()
+    }
+
+    /// The single selected item furthest right, or the folder holding a multiple selection.
+    var path: String {
+        var p = "/"
+        for (i, column) in columns.enumerated() {
+            if column.selected.count == 1, let row = column.selected.first { p = column.items[row] }
+            else if column.selected.count > 1 { p = folders[i] }
+        }
+        return p
+    }
+
+    var selectedPaths: [String] {
+        guard let column = columns.last(where: { !$0.selected.isEmpty }) else { return [] }
+        return column.selected.map { column.items[$0] }
+    }
+
+    private func layoutColumns() {
+        let width = floor(bounds.width / CGFloat(visible)), top = NeXTBrowser.scrollerSize
+        for (i, column) in columns.enumerated() {
+            column.isHidden = i < first || i >= first + visible
+            let last = i == first + visible - 1
+            column.frame = NSRect(x: CGFloat(i - first) * width, y: top, width: last ? bounds.width - CGFloat(visible - 1) * width : width, height: bounds.height - top)
+        }
+        needsDisplay = true
+    }
+    override func resizeSubviews(withOldSize oldSize: NSSize) { layoutColumns() }
+
+    // The horizontal scroller along the top: two arrow buttons on the left, then the track and its knob
+    private var leftButton: NSRect { NSRect(x: 0, y: 0, width: NeXTBrowser.scrollerSize, height: NeXTBrowser.scrollerSize) }
+    private var rightButton: NSRect { leftButton.offsetBy(dx: NeXTBrowser.scrollerSize, dy: 0) }
+    private var track: NSRect { NSRect(x: 2 * NeXTBrowser.scrollerSize, y: 0, width: bounds.width - 2 * NeXTBrowser.scrollerSize, height: NeXTBrowser.scrollerSize) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        fill(face, bounds) // the empty column slots
+        fill(NSColor(calibratedWhite: 0.333, alpha: 1), track)
+        let total = CGFloat(max(folders.count, visible))
+        let knob = NSRect(x: track.minX + track.width * CGFloat(first) / total, y: 0, width: track.width * CGFloat(visible) / total, height: track.height)
+        if folders.count > visible { bevel(knob.insetBy(dx: 1, dy: 1)) }
+        for (button, direction) in [(leftButton, Character("<")), (rightButton, Character(">"))] {
+            bevel(button)
+            triangle(in: NSRect(x: button.midX - 3, y: button.midY - 4, width: 6, height: 8), pointing: direction)
+        }
+        fill(.black, NSRect(x: 0, y: NeXTBrowser.scrollerSize - 1, width: bounds.width, height: 1))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        let last = max(0, folders.count - visible)
+        if leftButton.contains(p) { first = max(0, first - 1) }
+        else if rightButton.contains(p) { first = min(last, first + 1) }
+        else if track.contains(p) { first = min(last, max(0, Int((p.x - track.minX) / track.width * CGFloat(max(folders.count, visible))) - visible / 2)) }
+        layoutColumns()
     }
 }
 
-final class FileViewer: NSObject, NSWindowDelegate, NSBrowserDelegate {
+final class BrowserColumn: NSView, NSDraggingSource {
+    let items: [String]
+    weak var browser: NeXTBrowser?
+    var index = 0
+    var selected = IndexSet() { didSet { needsDisplay = true } }
+    private var offset: CGFloat = 0 { didSet { needsDisplay = true } }
+    private let rowHeight: CGFloat = 18
+    private let bar = NeXTBrowser.scrollerSize
+    override var isFlipped: Bool { true }
+
+    init(items: [String]) {
+        self.items = items
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private var maxOffset: CGFloat { max(0, CGFloat(items.count) * rowHeight - bounds.height) }
+    private var upButton: NSRect { NSRect(x: 0, y: bounds.height - 2 * bar, width: bar, height: bar) }
+    private var downButton: NSRect { NSRect(x: 0, y: bounds.height - bar, width: bar, height: bar) }
+    private var trackHeight: CGFloat { bounds.height - 2 * bar }
+    private var knob: NSRect {
+        let content = CGFloat(items.count) * rowHeight
+        let height = max(bar, trackHeight * bounds.height / max(content, 1))
+        return NSRect(x: 0, y: (trackHeight - height) * offset / max(maxOffset, 1), width: bar, height: height)
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        offset = min(offset, maxOffset)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        fill(face, bounds)
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        let textHeight = ceil(font.ascender - font.descender)
+        let firstRow = max(0, Int(offset / rowHeight)), lastRow = min(items.count, Int((offset + bounds.height) / rowHeight) + 1)
+        for row in firstRow..<max(firstRow, lastRow) {
+            let r = NSRect(x: bar, y: CGFloat(row) * rowHeight - offset, width: bounds.width - bar - 1, height: rowHeight)
+            if selected.contains(row) { fill(.white, r) }
+            let folder = isFolder(items[row])
+            ((items[row] as NSString).lastPathComponent as NSString).draw(
+                in: NSRect(x: r.minX + 6, y: r.minY + floor((rowHeight - textHeight) / 2), width: r.width - (folder ? 26 : 10), height: textHeight),
+                withAttributes: [.font: font, .foregroundColor: NSColor.black, .paragraphStyle: style])
+            if folder { triangle(in: NSRect(x: r.maxX - 13, y: r.midY - 4, width: 6, height: 8), pointing: ">") }
+        }
+        // Scroller on the left: dark track, bevelled knob, both arrow buttons at the bottom
+        fill(NSColor(calibratedWhite: 0.333, alpha: 1), NSRect(x: 0, y: 0, width: bar, height: trackHeight))
+        if maxOffset > 0 { bevel(knob.insetBy(dx: 1, dy: 1)) }
+        for (button, direction) in [(upButton, Character("^")), (downButton, Character("v"))] {
+            bevel(button)
+            triangle(in: NSRect(x: button.midX - 4, y: button.midY - 3, width: 8, height: 6), pointing: direction)
+        }
+        fill(.black, NSRect(x: bar, y: 0, width: 1, height: bounds.height))
+        fill(.black, NSRect(x: bounds.maxX - 1, y: 0, width: 1, height: bounds.height))
+    }
+
+    func reveal() {
+        guard let row = selected.first else { return }
+        let y = CGFloat(row) * rowHeight
+        if y < offset || y + rowHeight > offset + bounds.height { offset = min(maxOffset, max(0, y - bounds.height / 2)) }
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * rowHeight
+        offset = min(maxOffset, max(0, offset - delta))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let browser, let window else { return }
+        let p = convert(event.locationInWindow, from: nil)
+        if p.x < bar { return scroller(p, event) }
+        let row = Int((p.y + offset) / rowHeight)
+        guard row < items.count else { return }
+        var rows: IndexSet = [row]
+        if event.modifierFlags.contains(.command) {
+            rows = selected
+            if rows.contains(row) { rows.remove(row) } else { rows.insert(row) }
+        } else if event.modifierFlags.contains(.shift), let anchor = selected.first {
+            rows = IndexSet(integersIn: min(anchor, row)...max(anchor, row))
+        } else if selected.contains(row), event.clickCount == 1 {
+            rows = selected // keep a multiple selection so it can be dragged
+        }
+        browser.select(rows, in: index)
+        if event.clickCount == 2 { return browser.onOpen() }
+        // Drag the selection out (to the Recycler, the shelf, the Dock or another app)
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]), next.type == .leftMouseDragged {
+            let q = convert(next.locationInWindow, from: nil)
+            guard hypot(q.x - p.x, q.y - p.y) > 4 else { continue }
+            let dragged = selected.map { row -> NSDraggingItem in
+                let item = NSDraggingItem(pasteboardWriter: URL(fileURLWithPath: items[row]) as NSURL)
+                item.setDraggingFrame(NSRect(x: q.x - 16, y: q.y - 16, width: 32, height: 32), contents: NSWorkspace.shared.icon(forFile: items[row]))
+                return item
+            }
+            beginDraggingSession(with: dragged, event: next, source: self)
+            return
+        }
+    }
+
+    private func scroller(_ p: NSPoint, _ event: NSEvent) {
+        if upButton.contains(p) { offset = max(0, offset - rowHeight); return }
+        if downButton.contains(p) { offset = min(maxOffset, offset + rowHeight); return }
+        guard maxOffset > 0, let window else { return }
+        let grab = knob.contains(p) ? p.y - knob.minY : knob.height / 2
+        func move(_ y: CGFloat) { offset = min(maxOffset, max(0, (y - grab) / max(trackHeight - knob.height, 1) * maxOffset)) }
+        move(p.y)
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]), next.type == .leftMouseDragged {
+            move(convert(next.locationInWindow, from: nil).y)
+        }
+    }
+
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .every }
+}
+
+final class FileViewer: NSObject, NSWindowDelegate {
     static var viewers: [FileViewer] = []
     static var current: FileViewer? { viewers.first { $0.window.isKeyWindow } ?? viewers.last }
 
     let window = NeXTWindow(body: NSSize(width: 760, height: 540))
-    let browser = NSBrowser()
+    let browser = NeXTBrowser()
     let shelf = Shelf()
     let pathView = PathView()
-    private var cache: [String: [NSString]] = [:]
+    private var cache: [String: [String]] = [:]
     private var revealed: Set<String> = [] // hidden folders on a path we were asked to show (e.g. ~/.Trash)
 
     static func open(_ path: String) {
@@ -743,25 +972,9 @@ final class FileViewer: NSObject, NSWindowDelegate, NSBrowserDelegate {
         browser.autoresizingMask = [.width, .height]
         shelf.go = { [weak self] in self?.go($0) }
         pathView.go = { [weak self] in self?.go($0) }
-
-        browser.setCellClass(CenteredBrowserCell.self)
-        // NeXT's light grey columns instead of white; in Dark Mode a lighter charcoal than the default
-        browser.backgroundColor = NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(calibratedWhite: 0.3, alpha: 1) : NSColor(calibratedWhite: 0.8, alpha: 1)
-        }
-        browser.delegate = self
-        browser.target = self
-        browser.action = #selector(selectionChanged)
-        browser.doubleAction = #selector(openSelection)
-        browser.minColumnWidth = 160
-        browser.maxVisibleColumns = 4
-        browser.allowsMultipleSelection = true
-        browser.separatesColumns = true
-        browser.isTitled = false
-        browser.hasHorizontalScroller = true
-        browser.setDraggingSourceOperationMask(.every, forLocal: true)
-        browser.setDraggingSourceOperationMask(.every, forLocal: false)
+        browser.children = { [weak self] in self?.children($0) ?? [] }
+        browser.onSelect = { [weak self] in self?.selectionChanged() }
+        browser.onOpen = { [weak self] in self?.openSelection() }
         [shelf, pathView, browser].forEach { window.body.addSubview($0) }
         window.center()
         let offset = CGFloat(FileViewer.viewers.count) * 24
@@ -770,16 +983,9 @@ final class FileViewer: NSObject, NSWindowDelegate, NSBrowserDelegate {
     }
 
     /// The selected file or folder (or the deepest open folder).
-    var path: String {
-        let p = browser.path()
-        return p.isEmpty ? "/" : p
-    }
+    var path: String { browser.path }
 
-    var selectedPaths: [String] {
-        let column = browser.selectedColumn
-        guard column >= 0, let rows = browser.selectedRowIndexes(inColumn: column) else { return [] }
-        return rows.compactMap { browser.item(atRow: $0, inColumn: column) as? String }
-    }
+    var selectedPaths: [String] { browser.selectedPaths }
 
     func go(_ target: String) {
         var p = "/"
@@ -787,26 +993,24 @@ final class FileViewer: NSObject, NSWindowDelegate, NSBrowserDelegate {
             p = (p as NSString).appendingPathComponent(component)
             if component.hasPrefix(".") { revealed.insert(p) }
         }
-        browser.loadColumnZero()
-        browser.setPath(target)
+        browser.load(target)
         selectionChanged()
     }
 
     func refresh() {
         let keep = path
         cache = [:]
-        browser.loadColumnZero()
-        browser.setPath(FileManager.default.fileExists(atPath: keep) ? keep : (keep as NSString).deletingLastPathComponent)
+        browser.load(FileManager.default.fileExists(atPath: keep) ? keep : (keep as NSString).deletingLastPathComponent)
         selectionChanged()
     }
 
-    @objc func selectionChanged() {
+    func selectionChanged() {
         pathView.path = path
         window.title = path
         if Inspector.shared.panel.isVisible { Inspector.shared.update(path) }
     }
 
-    @objc func openSelection() {
+    func openSelection() {
         for p in selectedPaths where !isFolder(p) { NSWorkspace.shared.open(URL(fileURLWithPath: p)) }
     }
 
@@ -814,7 +1018,8 @@ final class FileViewer: NSObject, NSWindowDelegate, NSBrowserDelegate {
         let paths = selectedPaths
         guard !paths.isEmpty else { return NSSound.beep() }
         paths.forEach { try? FileManager.default.trashItem(at: URL(fileURLWithPath: $0), resultingItemURL: nil) }
-        browser.setPath((paths[0] as NSString).deletingLastPathComponent)
+        cache = [:]
+        go((paths[0] as NSString).deletingLastPathComponent)
         FileViewer.viewers.forEach { $0.refresh() }
     }
 
@@ -830,39 +1035,15 @@ final class FileViewer: NSObject, NSWindowDelegate, NSBrowserDelegate {
 
     func windowWillClose(_ notification: Notification) { FileViewer.viewers.removeAll { $0 === self } }
 
-    // Browser contents: items are full paths, shown by name
-    private func children(_ item: Any?) -> [NSString] {
-        let folder = item as? String ?? "/"
+    /// A folder's contents as full paths, sorted by name, without hidden files.
+    private func children(_ folder: String) -> [String] {
         if let cached = cache[folder] { return cached }
         let names = (try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []
         let list = names.map { (folder as NSString).appendingPathComponent($0) }
             .filter { !($0 as NSString).lastPathComponent.hasPrefix(".") || revealed.contains($0) }
             .sorted { ($0 as NSString).lastPathComponent.localizedStandardCompare(($1 as NSString).lastPathComponent) == .orderedAscending }
-            .map { $0 as NSString }
         cache[folder] = list
         return list
-    }
-
-    func rootItem(for browser: NSBrowser) -> Any? { "/" as NSString }
-    func browser(_ browser: NSBrowser, numberOfChildrenOfItem item: Any?) -> Int { children(item).count }
-    func browser(_ browser: NSBrowser, child index: Int, ofItem item: Any?) -> Any { children(item)[index] }
-    func browser(_ browser: NSBrowser, isLeafItem item: Any?) -> Bool { !isFolder(item as? String ?? "/") }
-    func browser(_ browser: NSBrowser, objectValueForItem item: Any?) -> Any? { ((item as? String ?? "/") as NSString).lastPathComponent }
-
-    func browser(_ sender: NSBrowser, willDisplayCell cell: Any, atRow row: Int, column: Int) {
-        guard let cell = cell as? NSBrowserCell, let path = sender.item(atRow: row, inColumn: column) as? String else { return }
-        let icon = NSWorkspace.shared.icon(forFile: path)
-        icon.size = NSSize(width: 16, height: 16)
-        cell.image = icon
-        cell.font = font
-    }
-
-    // Drag files out of the browser (to the Recycler, the shelf, the Dock or other apps)
-    func browser(_ browser: NSBrowser, canDragRowsWith rowIndexes: IndexSet, inColumn column: Int, with event: NSEvent) -> Bool { true }
-    func browser(_ browser: NSBrowser, writeRowsWith rowIndexes: IndexSet, inColumn column: Int, to pasteboard: NSPasteboard) -> Bool {
-        let urls = rowIndexes.compactMap { browser.item(atRow: $0, inColumn: column) as? String }.map { URL(fileURLWithPath: $0) as NSURL }
-        pasteboard.clearContents()
-        return pasteboard.writeObjects(urls)
     }
 }
 // MARK: NeXT windows
