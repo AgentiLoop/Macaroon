@@ -146,6 +146,15 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
         rm -rf "$HOME/Applications/NeXT Workspace.app"
         ditto "$src" "$HOME/Applications/NeXT Workspace.app"
+        # NeXT Calculator replaces Calculator in the Dock (also in a Dock saved by an earlier run)
+        if [ -d "/Volumes/My Shared Files/NeXT Calculator.app" ]; then
+            rm -rf "$HOME/Applications/NeXT Calculator.app"
+            ditto "/Volumes/My Shared Files/NeXT Calculator.app" "$HOME/Applications/NeXT Calculator.app"
+            dock=$(defaults read com.macaroon.NeXTWorkspace DockApps 2>/dev/null | grep -o '"[^"]*"' | tr -d '"')
+            if [ -n "$dock" ]; then
+                defaults write com.macaroon.NeXTWorkspace DockApps -array ${(f)"$(print -r -- "$dock" | sed "s|^/System/Applications/Calculator.app$|$HOME/Applications/NeXT Calculator.app|")"}
+            fi
+        fi
         agent="$HOME/Library/LaunchAgents/com.macaroon.NeXTWorkspace.plist"
         cat > "$agent" <<EOF
     <?xml version="1.0" encoding="UTF-8"?>
