@@ -629,6 +629,7 @@ final class MenuColumn {
         let column = MenuColumn(title: title)
         column.parent = self
         column.sourceRow = row
+        column.panel.level = panel.level // submenus of a floating torn-off menu float with it
         child = column
         column.build(entries)
         column.place()
@@ -650,6 +651,10 @@ final class MenuColumn {
             parent = nil
             MenuColumn.tornOff.append(self)
             rows.first?.closeBox = true
+            // Torn-off menus float above app windows (NeXTSTEP kept them on top), on every Space
+            panel.level = .floating
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+            child?.panel.level = .floating
         }
         child?.place()
     }
