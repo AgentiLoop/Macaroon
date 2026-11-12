@@ -699,7 +699,7 @@ final class FileViewer: NSObject, NSWindowDelegate, NSBrowserDelegate {
     static var viewers: [FileViewer] = []
     static var current: FileViewer? { viewers.first { $0.window.isKeyWindow } ?? viewers.last }
 
-    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 540), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+    let window = NeXTWindow(body: NSSize(width: 760, height: 540))
     let browser = NSBrowser()
     let shelf = Shelf()
     let pathView = PathView()
@@ -717,7 +717,6 @@ final class FileViewer: NSObject, NSWindowDelegate, NSBrowserDelegate {
         super.init()
         window.isReleasedWhenClosed = false
         window.delegate = self
-        window.backgroundColor = face
         window.minSize = NSSize(width: 480, height: 360)
         let (w, h): (CGFloat, CGFloat) = (760, 540)
         shelf.frame = NSRect(x: 0, y: h - 84, width: w, height: 84)
@@ -747,7 +746,7 @@ final class FileViewer: NSObject, NSWindowDelegate, NSBrowserDelegate {
         browser.hasHorizontalScroller = true
         browser.setDraggingSourceOperationMask(.every, forLocal: true)
         browser.setDraggingSourceOperationMask(.every, forLocal: false)
-        [shelf, pathView, browser].forEach { window.contentView?.addSubview($0) }
+        [shelf, pathView, browser].forEach { window.body.addSubview($0) }
         window.center()
         let offset = CGFloat(FileViewer.viewers.count) * 24
         window.setFrameOrigin(NSPoint(x: window.frame.minX + offset, y: window.frame.minY - offset))
@@ -850,24 +849,140 @@ final class FileViewer: NSObject, NSWindowDelegate, NSBrowserDelegate {
         return pasteboard.writeObjects(urls)
     }
 }
+// MARK: NeXT windows
+
+/// A NeXTSTEP window: square corners, black title bar (dark grey when inactive) with the title centred,
+/// miniaturize button on the left, close button on the right, and a resize bar along the bottom.
+/// Put content in `body`; it fills the space between the title bar and the resize bar.
+final class NeXTWindow: NSWindow {
+    static let titleHeight: CGFloat = 23
+    static let resizeHeight: CGFloat = 9
+    let body: NSView
+    private let titleBar = NeXTTitleBar()
+    private let resizeBar: NeXTResizeBar?
+
+    init(body size: NSSize, resizable: Bool = true) {
+        let barHeight = resizable ? NeXTWindow.resizeHeight : 0
+        let frame = NSRect(x: 0, y: 0, width: size.width, height: size.height + NeXTWindow.titleHeight + barHeight)
+        body = NSView(frame: NSRect(x: 0, y: barHeight, width: size.width, height: size.height))
+        resizeBar = resizable ? NeXTResizeBar(frame: NSRect(x: 0, y: 0, width: size.width, height: barHeight)) : nil
+        super.init(contentRect: frame, styleMask: [.borderless, .miniaturizable], backing: .buffered, defer: false)
+        hasShadow = true
+        backgroundColor = .black // the one-pixel frame around everything
+        let frameView = NSView(frame: frame)
+        body.autoresizingMask = [.width, .height]
+        body.wantsLayer = true
+        body.layer?.backgroundColor = face.cgColor
+        titleBar.frame = NSRect(x: 0, y: frame.height - NeXTWindow.titleHeight, width: frame.width, height: NeXTWindow.titleHeight)
+        titleBar.autoresizingMask = [.width, .minYMargin]
+        frameView.addSubview(body)
+        frameView.addSubview(titleBar)
+        if let resizeBar {
+            resizeBar.autoresizingMask = [.width, .maxYMargin]
+            frameView.addSubview(resizeBar)
+        }
+        contentView = frameView
+    }
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+    override var title: String { didSet { titleBar.needsDisplay = true } }
+    override func becomeKey() { super.becomeKey(); titleBar.needsDisplay = true }
+    override func resignKey() { super.resignKey(); titleBar.needsDisplay = true }
+    override func performClose(_ sender: Any?) {
+        if delegate?.windowShouldClose?(self) == false { return }
+        close()
+    }
+}
+
+final class NeXTTitleBar: NSView {
+    private var miniaturizeBox: NSRect { NSRect(x: 4, y: 4, width: 15, height: 15) }
+    private var closeBox: NSRect { NSRect(x: bounds.maxX - 19, y: 4, width: 15, height: 15) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let key = window?.isKeyWindow == true
+        fill(key ? .black : NSColor(calibratedWhite: 0.333, alpha: 1), bounds)
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        style.lineBreakMode = .byTruncatingMiddle
+        let title = (window?.title ?? "") as NSString
+        let height = title.size(withAttributes: [.font: boldFont]).height
+        title.draw(in: NSRect(x: 24, y: floor((bounds.height - height) / 2), width: bounds.width - 48, height: height),
+                   withAttributes: [.font: boldFont, .foregroundColor: key ? NSColor.white : NSColor(calibratedWhite: 0.667, alpha: 1), .paragraphStyle: style])
+        bevel(miniaturizeBox)
+        let square = NSBezierPath(rect: miniaturizeBox.insetBy(dx: 4.5, dy: 4.5))
+        NSColor.black.setStroke()
+        square.stroke()
+        bevel(closeBox)
+        let x = NSBezierPath()
+        let r = closeBox.insetBy(dx: 4, dy: 4)
+        x.move(to: NSPoint(x: r.minX, y: r.minY)); x.line(to: NSPoint(x: r.maxX, y: r.maxY))
+        x.move(to: NSPoint(x: r.minX, y: r.maxY)); x.line(to: NSPoint(x: r.maxX, y: r.minY))
+        x.lineWidth = 1.5
+        x.stroke()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        if closeBox.contains(point) { return window.performClose(nil) }
+        if miniaturizeBox.contains(point) { return window.miniaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+        window.performDrag(with: event)
+    }
+}
+
+/// NeXT's resize bar: drag it to resize; the end segments resize the width too, the middle only the height.
+final class NeXTResizeBar: NSView {
+    private let corner: CGFloat = 28
+
+    override func draw(_ dirtyRect: NSRect) {
+        bevel(bounds)
+        fill(.black, NSRect(x: corner, y: 0, width: 1, height: bounds.height))
+        fill(.black, NSRect(x: bounds.maxX - corner, y: 0, width: 1, height: bounds.height))
+        fill(.white, NSRect(x: corner + 1, y: 1, width: 1, height: bounds.height - 2))
+        fill(.white, NSRect(x: bounds.maxX - corner + 1, y: 1, width: 1, height: bounds.height - 2))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        let x = convert(event.locationInWindow, from: nil).x
+        let left = x < corner, right = x > bounds.maxX - corner
+        let start = NSEvent.mouseLocation, frame = window.frame
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]), next.type == .leftMouseDragged {
+            let p = NSEvent.mouseLocation
+            let dx = p.x - start.x, dy = start.y - p.y
+            var f = frame
+            f.size.height = max(window.minSize.height, frame.height + dy)
+            f.origin.y = frame.maxY - f.height // the top edge stays put
+            if right { f.size.width = max(window.minSize.width, frame.width + dx) }
+            if left {
+                f.size.width = max(window.minSize.width, frame.width - dx)
+                f.origin.x = frame.maxX - f.width
+            }
+            window.setFrame(f, display: true)
+        }
+    }
+}
+
+
 
 // MARK: Inspector
 
 final class Inspector {
     static let shared = Inspector()
-    let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 300, height: 300), styleMask: [.titled, .closable, .utilityWindow], backing: .buffered, defer: false)
+    let panel = NeXTWindow(body: NSSize(width: 300, height: 300), resizable: false)
     private let icon = NSImageView(frame: NSRect(x: 126, y: 236, width: 48, height: 48))
     private let text = NSTextField(wrappingLabelWithString: "")
 
     init() {
         panel.title = "Inspector"
         panel.isReleasedWhenClosed = false
-        panel.backgroundColor = face
         text.frame = NSRect(x: 16, y: 16, width: 268, height: 210)
         text.font = font
         text.isSelectable = true
-        panel.contentView?.addSubview(icon)
-        panel.contentView?.addSubview(text)
+        panel.body.addSubview(icon)
+        panel.body.addSubview(text)
     }
 
     func show(_ path: String?) {
