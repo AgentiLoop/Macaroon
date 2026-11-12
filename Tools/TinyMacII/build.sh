@@ -23,6 +23,18 @@ build() {
     else
         swiftc -O -target arm64-apple-macos14 "$here/$1" -o "$app/Contents/MacOS/$3"
     fi
+    # NeXT icon: drawn by NeXT Workspace (built first) exactly like its Dock tile, as AppIcon.icns
+    local iconKey="" ws="$shared/NeXT Workspace.app/Contents/MacOS/NeXTWorkspace" set=$(mktemp -d)/AppIcon.iconset
+    mkdir -p "$set"
+    if [ -x "$ws" ] && "$ws" --icon "$4" "$set/icon_512x512@2x.png"; then
+        for s in 16 32 128 256 512; do
+            sips -z $s $s "$set/icon_512x512@2x.png" --out "$set/icon_${s}x${s}.png" >/dev/null
+            [ $s = 512 ] || sips -z $((s * 2)) $((s * 2)) "$set/icon_512x512@2x.png" --out "$set/icon_${s}x${s}@2x.png" >/dev/null
+        done
+        mkdir -p "$app/Contents/Resources"
+        iconutil -c icns "$set" -o "$app/Contents/Resources/AppIcon.icns" && iconKey="<key>CFBundleIconFile</key><string>AppIcon</string>"
+    fi
+    rm -rf "${set:h}"
     cat > "$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -36,6 +48,7 @@ build() {
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><$5/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    $iconKey
     ${7:-}
 </dict>
 </plist>

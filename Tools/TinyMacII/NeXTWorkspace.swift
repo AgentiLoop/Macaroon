@@ -180,8 +180,14 @@ enum NeXTIcons {
     }
 
     static func draw(app path: String, in area: NSRect) {
+        if !draw(identifier: Bundle(path: path)?.bundleIdentifier, in: area) { greyscale(NSWorkspace.shared.icon(forFile: path), in: area) }
+    }
+
+    /// Draws the NeXT icon for an app by bundle identifier; false when there isn't one.
+    @discardableResult
+    static func draw(identifier: String?, in area: NSRect) -> Bool {
         r = area
-        switch Bundle(path: path)?.bundleIdentifier {
+        switch identifier {
         case "com.apple.finder": drawNeXTIcon(NSHomeDirectory(), in: area)
         case "com.apple.Safari", "com.macaroon.NeXTBrowser": globe()
         case "com.apple.mail": mail()
@@ -189,8 +195,9 @@ enum NeXTIcons {
         case "com.apple.Terminal", "com.macaroon.NeXTTerminal": terminal()
         case "com.apple.calculator", "com.macaroon.NeXTCalculator": calculator()
         case "com.apple.systempreferences": preferences()
-        default: greyscale(NSWorkspace.shared.icon(forFile: path), in: area)
+        default: return false
         }
+        return true
     }
 
     private static func globe() {
@@ -339,7 +346,7 @@ final class Tile: NSView {
     /// The NeXT cube logo in black, white and grey: a black cube tilted 28°, its front face toward you with
     /// "Ne" over "XT" all on that one face (each letter its own grey, where the original has four colours),
     /// narrow side and bottom faces showing, white edges and a hard drop shadow like the other tiles.
-    private func drawCube() {
+    func drawCube() {
         let a: CGFloat = 15, d: CGFloat = 7 // half the front face, depth of the side faces
         NSGraphicsContext.saveGraphicsState()
         let tilt = NSAffineTransform()
@@ -1464,6 +1471,24 @@ final class Inspector {
         Permissions: \(String(rwx))
         """
     }
+}
+
+// build.sh: `NeXTWorkspace --icon <bundle id> <file.png>` writes a 1024-pixel app icon, the Dock tile's drawing
+// scaled up 16× (same lines and shadows), and exits. The Workspace's own icon is the NeXT cube.
+if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--icon" {
+    let id = CommandLine.arguments[2]
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1024, pixelsHigh: 1024, bitsPerSample: 8, samplesPerPixel: 4,
+                               hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    NSGraphicsContext.current?.cgContext.scaleBy(x: 1024 / tileSize, y: 1024 / tileSize)
+    if id == "com.macaroon.NeXTWorkspace" {
+        Tile(path: nil).drawCube()
+    } else if !NeXTIcons.draw(identifier: id, in: NSRect(x: 8, y: 8, width: tileSize - 16, height: tileSize - 16)) {
+        exit(1)
+    }
+    NSGraphicsContext.current = nil
+    guard (try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: CommandLine.arguments[3]))) != nil else { exit(1) }
+    exit(0)
 }
 
 let application = NSApplication.shared
