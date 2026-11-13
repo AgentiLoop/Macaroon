@@ -12,7 +12,9 @@ textDocuments='<key>CFBundleDocumentTypes</key><array><dict><key>CFBundleTypeNam
 # build <source> <app name> <executable> <bundle id> <LSUIElement true|false> [kit] [extra Info.plist keys]
 # "kit": compile with NeXTKit.swift (the shared NeXT look); the app's file becomes main.swift so its top-level code runs.
 build() {
-    local app="$shared/$2.app"
+    # Built in a staging folder and moved into place at the end, so the VM's setup script never copies a
+    # half-built bundle (no executable or Info.plist yet: macOS shows it with a circle-slash icon)
+    local final="$shared/$2.app" app="$shared/.staging/$2.app"
     rm -rf "$app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     # NeXT Workspace's Dock tile (and its app icon) is the colour NeXT logo
@@ -70,6 +72,9 @@ build() {
 EOF
     # A designated requirement on the identifier (not the ad-hoc hash), so permissions survive rebuilds
     codesign -s - -f -r="designated => identifier \"$4\"" "$app"
+    rm -rf "$final"
+    mv "$app" "$final"
+    app=$final
     # Finder and the Dock cache icons by path: tell them this bundle (and its icon) changed
     touch "$app"
     /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app"

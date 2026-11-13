@@ -144,6 +144,11 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     # Copies an app from the shared folder without quarantine or other attributes, then re-signs it here (ad hoc,
     # same identifier requirement). A quarantined ad-hoc app is what macOS reports as "damaged".
     install_app() {
+        # A bundle caught mid-build on the Mac (no Info.plist or executable) would show the circle-slash icon
+        if [ ! -f "$1/Contents/Info.plist" ] || [ -z "$(ls "$1/Contents/MacOS" 2>/dev/null)" ]; then
+            echo "Skipped ${2:t}: incomplete in the Shared Folder (rebuild with Tools/MacCube/build.sh, then run this again)"
+            return
+        fi
         rm -rf "$2"
         ditto --noextattr --noqtn "$1" "$2"
         xattr -cr "$2"
