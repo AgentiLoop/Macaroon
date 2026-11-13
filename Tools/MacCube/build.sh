@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Builds "NeXT Workspace.app" (NeXTSTEP Dock + vertical main menu for MacCube), "NeXT Calculator.app",
-# "NeXT Browser.app", "NeXT Edit.app" and "NeXT Terminal.app" into Macaroon's shared folder, where "Set Up NeXT Look.command" installs
+# "NeXT Browser.app", "NeXT Edit.app", "NeXT Terminal.app" and "NeXT Apps.app" into Macaroon's shared folder, where "Set Up NeXT Look.command" installs
 # them inside the VM from /Volumes/My Shared Files.
 set -euo pipefail
 here=${0:A:h}
@@ -81,3 +81,4 @@ build NeXTCalculator.swift "NeXT Calculator" NeXTCalculator com.macaroon.NeXTCal
 build NeXTBrowser.swift "NeXT Browser" NeXTBrowser com.macaroon.NeXTBrowser false kit
 build NeXTEdit.swift "NeXT Edit" NeXTEdit com.macaroon.NeXTEdit false kit "$textDocuments"
 build NeXTTerminal.swift "NeXT Terminal" NeXTTerminal com.macaroon.NeXTTerminal false kit
+build NeXTApps.swift "NeXT Apps" NeXTApps com.macaroon.NeXTApps false kit

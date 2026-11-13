@@ -133,7 +133,7 @@ func axString(_ e: AXUIElement, _ attribute: String) -> String? { axValue(e, att
 // MARK: Dock
 
 enum DockApps {
-    static let standard = ["/System/Library/CoreServices/Finder.app", NSHomeDirectory() + "/Applications/NeXT Browser.app", "/System/Applications/Mail.app",
+    static let standard = ["/System/Library/CoreServices/Finder.app", NSHomeDirectory() + "/Applications/NeXT Apps.app", NSHomeDirectory() + "/Applications/NeXT Browser.app", "/System/Applications/Mail.app",
                            NSHomeDirectory() + "/Applications/NeXT Edit.app", NSHomeDirectory() + "/Applications/NeXT Terminal.app",
                            NSHomeDirectory() + "/Applications/NeXT Calculator.app", "/System/Applications/System Settings.app"]
     static var paths: [String] {
@@ -195,6 +195,7 @@ enum NeXTIcons {
         case "com.apple.Terminal", "com.macaroon.NeXTTerminal": terminal()
         case "com.apple.calculator", "com.macaroon.NeXTCalculator": calculator()
         case "com.apple.systempreferences": preferences()
+        case "com.apple.apps.launcher", "com.apple.launchpad.launcher", "com.macaroon.NeXTApps": apps()
         default: return false
         }
         return true
@@ -251,6 +252,16 @@ enum NeXTIcons {
         (">_" as NSString).draw(at: point(11, 25), withAttributes: [.font: NSFont(name: "Courier-Bold", size: u(11)) ?? boldFont, .foregroundColor: NSColor.white])
         box(18, 6, 12, 6, 0.45) // neck
         box(10, 2, 28, 4, 0.6, shadow: true) // base
+    }
+
+    /// Apps: a tray of nine small bevelled app tiles.
+    private static func apps() {
+        box(4, 4, 40, 40, 0.45, shadow: true)
+        for row in 0..<3 {
+            for col in 0..<3 {
+                box(8 + CGFloat(col) * 11.5, 8 + CGFloat(row) * 11.5, 9, 9, row == 2 && col == 0 ? 0 : 0.85, shadow: true)
+            }
+        }
     }
 
     private static func calculator() {
