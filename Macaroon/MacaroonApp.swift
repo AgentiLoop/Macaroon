@@ -73,7 +73,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     @Published var busy = false
     @Published var machine: VZVirtualMachine?
     @Published var running = false
-    @Published var guest = GuestOS(rawValue: UserDefaults.standard.string(forKey: "guest") == "tinyMacII" ? "macCube" : UserDefaults.standard.string(forKey: "guest") ?? "") ?? .macOS {
+    @Published var guest = GuestOS(rawValue: UserDefaults.standard.string(forKey: "guest") ?? "") ?? .macOS {
         didSet {
             UserDefaults.standard.set(guest.rawValue, forKey: "guest")
             loadSnapshots()
