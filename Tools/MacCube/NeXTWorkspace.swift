@@ -1070,7 +1070,7 @@ final class NeXTBrowser: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         fill(face, bounds) // the empty column slots
-        fill(NSColor(calibratedWhite: 0.333, alpha: 1), track)
+        fill(window?.isKeyWindow == true ? NSColor(calibratedWhite: 0.333, alpha: 1) : NSColor(calibratedWhite: 0.46, alpha: 1), track)
         let total = CGFloat(max(folders.count, visible))
         let knob = NSRect(x: track.minX + track.width * CGFloat(first) / total, y: 0, width: track.width * CGFloat(visible) / total, height: track.height)
         if folders.count > visible { bevel(knob.insetBy(dx: 1, dy: 1)) }
@@ -1139,7 +1139,7 @@ final class BrowserColumn: NSView, NSDraggingSource {
             if folder { triangle(in: NSRect(x: r.maxX - 13, y: r.midY - 4, width: 6, height: 8), pointing: ">") }
         }
         // Scroller on the left: dark track, bevelled knob, both arrow buttons at the bottom
-        fill(NSColor(calibratedWhite: 0.333, alpha: 1), NSRect(x: 0, y: 0, width: bar, height: trackHeight))
+        fill(window?.isKeyWindow == true ? NSColor(calibratedWhite: 0.333, alpha: 1) : NSColor(calibratedWhite: 0.46, alpha: 1), NSRect(x: 0, y: 0, width: bar, height: trackHeight))
         if maxOffset > 0 { bevel(knob.insetBy(dx: 1, dy: 1)) }
         for (button, direction) in [(upButton, Character("^")), (downButton, Character("v"))] {
             bevel(button)
@@ -1356,8 +1356,10 @@ final class NeXTWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
     override var title: String { didSet { titleBar.needsDisplay = true } }
-    override func becomeKey() { super.becomeKey(); titleBar.needsDisplay = true }
-    override func resignKey() { super.resignKey(); titleBar.needsDisplay = true }
+    override func becomeKey() { super.becomeKey(); redrawAll(contentView) }
+    override func resignKey() { super.resignKey(); redrawAll(contentView) }
+    /// Scroller tracks change shade with key status, so redraw everything, not just the title bar.
+    private func redrawAll(_ view: NSView?) { guard let view else { return }; view.needsDisplay = true; view.subviews.forEach(redrawAll) }
     override func performClose(_ sender: Any?) {
         if delegate?.windowShouldClose?(self) == false { return }
         close()

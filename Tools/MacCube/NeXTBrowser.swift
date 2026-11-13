@@ -71,7 +71,7 @@ final class PageScroller: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        fill(dark, track)
+        fill(trackColor(self), track)
         if maxTop > 0 { bevel(knob.insetBy(dx: 1, dy: 1)) }
         for (button, up) in [(upButton, true), (downButton, false)] {
             bevel(button)

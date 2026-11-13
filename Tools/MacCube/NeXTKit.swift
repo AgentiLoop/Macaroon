@@ -5,6 +5,16 @@ import AppKit
 
 let face = NSColor(calibratedWhite: 0.667, alpha: 1)
 let dark = NSColor(calibratedWhite: 0.333, alpha: 1)
+/// Scroller track in a window that isn't key: lighter than the dark grey inactive title bar so they don't blend.
+let inactiveTrack = NSColor(calibratedWhite: 0.46, alpha: 1)
+func trackColor(_ view: NSView) -> NSColor { view.window?.isKeyWindow == true ? dark : inactiveTrack }
+
+/// Redraws every view in a window (scroller tracks change shade when the window gains or loses key).
+func redrawAll(_ view: NSView?) {
+    guard let view else { return }
+    view.needsDisplay = true
+    view.subviews.forEach(redrawAll)
+}
 let font = NSFont(name: "Helvetica", size: 12) ?? .systemFont(ofSize: 12)
 let boldFont = NSFont(name: "Helvetica-Bold", size: 12) ?? .boldSystemFont(ofSize: 12)
 
@@ -117,8 +127,8 @@ final class NeXTWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
     override var title: String { didSet { titleBar.needsDisplay = true } }
-    override func becomeKey() { super.becomeKey(); titleBar.needsDisplay = true }
-    override func resignKey() { super.resignKey(); titleBar.needsDisplay = true }
+    override func becomeKey() { super.becomeKey(); redrawAll(contentView) }
+    override func resignKey() { super.resignKey(); redrawAll(contentView) }
     /// Asks the delegate first (NeXT Edit's "save changes?"), then closes.
     override func performClose(_ sender: Any?) { if delegate?.windowShouldClose?(self) ?? true { close() } }
     /// A borderless window isn't made key by a click when its app was opened in the background (from NeXT
@@ -282,7 +292,7 @@ final class NeXTScroller: NSScroller {
     private var scrollView: NSScrollView? { superview as? NSScrollView }
 
     override func draw(_ dirtyRect: NSRect) {
-        fill(dark, track)
+        fill(trackColor(self), track)
         if scrollable { bevel(knob.insetBy(dx: 1, dy: 1)) }
         for (button, up) in [(upButton, true), (downButton, false)] {
             bevel(button)

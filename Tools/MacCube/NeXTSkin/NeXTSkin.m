@@ -160,7 +160,8 @@ static void Bevel(NSRect r) {
 
 - (void)drawRect:(NSRect)dirtyRect {
     BOOL horizontal = self.horizontal;
-    Fill(Dark(), self.track);
+    // Lighter when the window isn't key, so it doesn't blend into the dark grey inactive title bar
+    Fill(self.window.isKeyWindow ? Dark() : [NSColor colorWithCalibratedWhite:0.46 alpha:1], self.track);
     if (self.scrollable) Bevel(NSInsetRect(self.knob, 1, 1));
     for (int i = 0; i < 2; i++) {
         BOOL back = i == 0;
@@ -386,6 +387,11 @@ static void SkinWindow(NSWindow *window) {
     SkinScrollViews(window.contentView);
 }
 
+static void RedrawScrollers(NSView *view) {
+    if ([view isKindOfClass:NXScroller.class]) view.needsDisplay = YES;
+    for (NSView *sub in view.subviews) RedrawScrollers(sub);
+}
+
 static void SkinAll(void) {
     for (NSWindow *window in NSApp.windows) SkinWindow(window);
 }
@@ -450,6 +456,7 @@ static void Install(void) {
                     if (![name isEqualToString:NSWindowDidUpdateNotification]) {
                         for (NSView *v in [window standardWindowButton:NSWindowCloseButton].superview.subviews)
                             if ([v isKindOfClass:NXTitleBar.class]) v.needsDisplay = YES; // key / not key colours
+                        RedrawScrollers(window.contentView); // tracks are lighter while not key
                     }
                 }];
             }
