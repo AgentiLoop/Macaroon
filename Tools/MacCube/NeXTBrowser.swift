@@ -1,8 +1,9 @@
 // NeXT Browser for MacCube: a WebKit (WKWebView) browser dressed as a NeXTSTEP app. Square window with a black
 // title bar and resize bar, bevelled Back / Forward / Reload / Home buttons, an address field (web address or
-// search words), a sunken status line with loading progress. Downloads go to ~/Downloads (as in WebMan), file
-// uploads use the open panel, pop-ups open new windows. Menus: Info, File, Edit, View, Go, Windows, which
-// NeXT Workspace's vertical main menu shows.
+// search words), a favorites bar (a sunken shelf of bevelled buttons), a sunken status line with loading
+// progress, and a History panel listing the pages visited. Downloads go to ~/Downloads (as in WebMan), file
+// uploads use the open panel, pop-ups open new windows. Menus: Info, File, Edit, View, Go, Favorites, Windows,
+// which NeXT Workspace's vertical main menu shows.
 import AppKit
 import WebKit
 
@@ -128,9 +129,80 @@ final class PageView: WKWebView {
     }
 }
 
+// MARK: Favorites and history
+
+/// A favorite or a visited page.
+struct Page: Codable {
+    var title: String
+    var url: String
+    var date = Date()
+}
+
+func storedPages(_ key: String) -> [Page] {
+    UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode([Page].self, from: $0) } ?? []
+}
+
+func storePages(_ pages: [Page], _ key: String) { UserDefaults.standard.set(try? JSONEncoder().encode(pages), forKey: key) }
+
+/// Kept in the app's defaults. Favorites in the order added; history newest first, each page once.
+var favorites: [Page] = storedPages("favorites") { didSet { storePages(favorites, "favorites"); favoritesChanged() } }
+var history: [Page] = storedPages("history") { didSet { storePages(history, "history"); HistoryPanel.current?.reload() } }
+
+/// Goes to a favorite or history page in the front browser window (a new one if none is open).
+func showPage(_ page: Page) {
+    guard let url = URL(string: page.url) else { return }
+    guard let browser = Browser.front else { Browser.open(url); return }
+    browser.visit(url)
+    browser.window.makeKeyAndOrderFront(nil)
+}
+
+/// The favorites bar under the toolbar: a sunken shelf of bevelled buttons, one per favorite, as many as fit
+/// (all of them are in the Favorites menu). Click one to go there.
+final class FavoritesBar: NSView {
+    var visit: (URL) -> Void = { _ in }
+    private var buttons: [NeXTButton] = []
+
+    func reload() {
+        buttons.forEach { $0.removeFromSuperview() }
+        buttons = favorites.map { page in
+            let button = NeXTButton(page.title.count > 22 ? String(page.title.prefix(21)) + "…" : page.title) { [weak self] in
+                if let url = URL(string: page.url) { self?.visit(url) }
+            }
+            addSubview(button)
+            return button
+        }
+        layoutButtons()
+    }
+
+    private func layoutButtons() {
+        var x: CGFloat = 9
+        for button in buttons {
+            let width = ceil((button.title as NSString).size(withAttributes: [.font: boldFont]).width) + 16
+            button.frame = NSRect(x: x, y: 4, width: width, height: bounds.height - 6)
+            button.isHidden = x + width > bounds.width - 9
+            x += width + 3
+        }
+        needsDisplay = true
+    }
+    override func resizeSubviews(withOldSize oldSize: NSSize) { layoutButtons() }
+
+    override func draw(_ dirtyRect: NSRect) {
+        fill(face, bounds)
+        let shelf = NSRect(x: 6, y: 2, width: bounds.width - 12, height: bounds.height - 2)
+        bevel(shelf, sunken: true, color: wellColor)
+        guard buttons.isEmpty else { return }
+        let hint = "Favorites: Command-d adds this page" as NSString
+        let height = hint.size(withAttributes: [.font: font]).height
+        hint.draw(at: NSPoint(x: shelf.minX + 6, y: shelf.midY - height / 2), withAttributes: [.font: font, .foregroundColor: dark])
+    }
+}
+
 final class Browser: NSObject, NSWindowDelegate, NSTextFieldDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     static var all: [Browser] = []
-    static var front: Browser? { all.first { $0.window.isKeyWindow } ?? all.last }
+    /// The key browser window; when another window is key (the History panel), the browser window nearest the front.
+    static var front: Browser? {
+        all.first { $0.window.isKeyWindow } ?? NSApp.orderedWindows.lazy.compactMap { window in all.first { $0.window === window } }.first ?? all.last
+    }
     static var lastFind = ""
 
     let window = NeXTWindow(body: NSSize(width: 1000, height: 680))
@@ -138,6 +210,7 @@ final class Browser: NSObject, NSWindowDelegate, NSTextFieldDelegate, WKNavigati
     let field = NSTextField()
     let status = StatusLine()
     let scroller = PageScroller()
+    let favoritesBar = FavoritesBar()
     private var back: NeXTButton!, forward: NeXTButton!, reload: NeXTButton!
     private var watchers: [NSKeyValueObservation] = []
     /// The user is in the address field (from a click, Open Location or a new window) until they go or click the page.
@@ -163,7 +236,7 @@ final class Browser: NSObject, NSWindowDelegate, NSTextFieldDelegate, WKNavigati
         web = PageView(frame: .zero, configuration: configuration)
         super.init()
         let body = window.body, w = body.bounds.width, h = body.bounds.height
-        let toolbar: CGFloat = 36, statusHeight: CGFloat = 22
+        let toolbar: CGFloat = 36, favoritesHeight: CGFloat = 26, statusHeight: CGFloat = 22
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.minSize = NSSize(width: 480, height: 300)
@@ -201,7 +274,13 @@ final class Browser: NSObject, NSWindowDelegate, NSTextFieldDelegate, WKNavigati
         field.delegate = self
         well.addSubview(field)
 
-        let pageHeight = h - toolbar - statusHeight
+        favoritesBar.frame = NSRect(x: 0, y: h - toolbar - favoritesHeight, width: w, height: favoritesHeight)
+        favoritesBar.autoresizingMask = [.width, .minYMargin]
+        favoritesBar.visit = { [weak self] in self?.visit($0) }
+        favoritesBar.reload()
+        body.addSubview(favoritesBar)
+
+        let pageHeight = h - toolbar - favoritesHeight - statusHeight
         scroller.frame = NSRect(x: 0, y: statusHeight, width: PageScroller.bar + 1, height: pageHeight)
         scroller.autoresizingMask = [.height]
         scroller.scroll = { [weak self] top in
@@ -260,6 +339,28 @@ final class Browser: NSObject, NSWindowDelegate, NSTextFieldDelegate, WKNavigati
         window.makeFirstResponder(web)
     }
 
+    /// Goes to a favorite or history page.
+    func visit(_ url: URL) {
+        addressActive = false
+        web.load(URLRequest(url: url))
+        window.makeFirstResponder(web)
+    }
+
+    private var pageTitle: String { web.title?.isEmpty == false ? web.title! : web.url?.host ?? "Untitled" }
+
+    func addFavorite() {
+        guard let url = web.url?.absoluteString else { return NSSound.beep() }
+        guard !favorites.contains(where: { $0.url == url }) else { status.text = "Already in Favorites"; return }
+        favorites.append(Page(title: pageTitle, url: url))
+        status.text = "Added to Favorites"
+    }
+
+    func removeFavorite() {
+        guard let url = web.url?.absoluteString, favorites.contains(where: { $0.url == url }) else { return NSSound.beep() }
+        favorites.removeAll { $0.url == url }
+        status.text = "Removed from Favorites"
+    }
+
     func reloadOrStop() { if web.isLoading { web.stopLoading() } else { web.reload() } }
 
     func controlTextDidBeginEditing(_ obj: Notification) { addressActive = true }
@@ -312,7 +413,12 @@ final class Browser: NSObject, NSWindowDelegate, NSTextFieldDelegate, WKNavigati
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self }
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { status.text = "Done  \(webView.url?.host ?? "")" }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        status.text = "Done  \(webView.url?.host ?? "")"
+        guard let url = webView.url, url.scheme?.hasPrefix("http") == true else { return }
+        let earlier = history.filter { $0.url != url.absoluteString }
+        history = Array(([Page(title: pageTitle, url: url.absoluteString)] + earlier).prefix(500))
+    }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failed(error) }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { failed(error) }
 
@@ -371,9 +477,146 @@ final class Browser: NSObject, NSWindowDelegate, NSTextFieldDelegate, WKNavigati
     }
 }
 
+// MARK: History panel
+
+/// The history as a NeXT list: grey rows in black Helvetica (title, address, when), the selection in white.
+final class HistoryList: NSView {
+    static let rowHeight: CGFloat = 18
+    static let dates: DateFormatter = {
+        let dates = DateFormatter()
+        dates.dateStyle = .short
+        dates.timeStyle = .short
+        return dates
+    }()
+    var selected: Int? { didSet { needsDisplay = true; onSelect() } }
+    var onSelect: () -> Void = {}
+    var onOpen: () -> Void = {}
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        fill(face, bounds)
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        let textHeight = ceil(font.ascender - font.descender), when: CGFloat = 120
+        let half = floor((bounds.width - when - 24) / 2)
+        for (row, page) in history.enumerated() {
+            let r = NSRect(x: 0, y: CGFloat(row) * HistoryList.rowHeight, width: bounds.width, height: HistoryList.rowHeight)
+            guard r.intersects(dirtyRect) else { continue }
+            if row == selected { fill(.white, r) }
+            let y = r.minY + floor((r.height - textHeight) / 2)
+            func text(_ string: String, _ x: CGFloat, _ width: CGFloat) {
+                (string as NSString).draw(in: NSRect(x: x, y: y, width: width, height: textHeight),
+                                          withAttributes: [.font: font, .foregroundColor: NSColor.black, .paragraphStyle: style])
+            }
+            text(page.title, 6, half)
+            text(page.url, half + 12, half)
+            text(HistoryList.dates.string(from: page.date), bounds.width - when - 6, when)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let row = Int(convert(event.locationInWindow, from: nil).y / HistoryList.rowHeight)
+        selected = row < history.count ? row : nil
+        if selected != nil, event.clickCount == 2 { onOpen() }
+    }
+
+    /// As tall as its rows, and at least as tall as the scroll view shows.
+    func fit() {
+        guard let clip = enclosingScrollView?.contentView else { return }
+        setFrameSize(NSSize(width: clip.bounds.width, height: max(clip.bounds.height, CGFloat(history.count) * HistoryList.rowHeight)))
+        needsDisplay = true
+    }
+}
+
+/// The History panel (Go > History…): the pages visited, newest first, in a sunken list with NeXT's scroller on
+/// the left. Double-click a page or press Open to go there in the front browser window; Remove forgets the
+/// selected page, Clear History all of them.
+final class HistoryPanel: NSObject, NSWindowDelegate {
+    static var current: HistoryPanel?
+    let window = NeXTWindow(body: NSSize(width: 640, height: 360))
+    private let list = HistoryList()
+    private var open: NeXTButton!, remove: NeXTButton!, clear: NeXTButton!
+
+    static func show() {
+        let panel = current ?? HistoryPanel()
+        current = panel
+        panel.reload()
+        panel.window.makeKeyAndOrderFront(nil)
+    }
+
+    private override init() {
+        super.init()
+        let body = window.body, w = body.bounds.width, h = body.bounds.height
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.minSize = NSSize(width: 400, height: 200)
+        window.title = "History"
+        let well = SunkenWell(frame: NSRect(x: 8, y: 42, width: w - 16, height: h - 50))
+        well.autoresizingMask = [.width, .height]
+        body.addSubview(well)
+        let scroll = NeXTScrollView(frame: well.bounds.insetBy(dx: 1, dy: 1))
+        scroll.autoresizingMask = [.width, .height]
+        scroll.backgroundColor = face
+        list.autoresizingMask = [.width]
+        scroll.documentView = list
+        well.addSubview(scroll)
+        list.onSelect = { [weak self] in self?.enable() }
+        list.onOpen = { [weak self] in self?.openSelected() }
+
+        clear = NeXTButton("Clear History") { history = [] }
+        remove = NeXTButton("Remove") { [weak self] in
+            guard let row = self?.list.selected, row < history.count else { return }
+            history.remove(at: row)
+        }
+        open = NeXTButton("Open") { [weak self] in self?.openSelected() }
+        clear.frame = NSRect(x: 8, y: 8, width: 110, height: 26)
+        clear.autoresizingMask = [.maxXMargin, .maxYMargin]
+        remove.frame = NSRect(x: w - 164, y: 8, width: 76, height: 26)
+        open.frame = NSRect(x: w - 84, y: 8, width: 76, height: 26)
+        [remove!, open!].forEach { $0.autoresizingMask = [.minXMargin, .maxYMargin] }
+        [clear!, remove!, open!].forEach { body.addSubview($0) }
+        window.center()
+    }
+
+    func reload() {
+        list.selected = nil
+        list.fit()
+        enable()
+    }
+
+    private func enable() {
+        open.isEnabled = list.selected != nil
+        remove.isEnabled = list.selected != nil
+        clear.isEnabled = !history.isEmpty
+    }
+
+    private func openSelected() {
+        guard let row = list.selected, row < history.count else { return }
+        showPage(history[row])
+    }
+
+    func windowDidResize(_ notification: Notification) { list.fit() }
+}
+
 // MARK: Menus
 
+/// The Favorites menu: Add and Remove for the page in the front window, then every favorite.
+let favoritesItem = menu("Favorites", [])
+
+func favoritesChanged() {
+    Browser.all.forEach { $0.favoritesBar.reload() }
+    var items: [NSMenuItem] = [
+        Item("Add to Favorites", "d") { Browser.front?.addFavorite() },
+        Item("Remove from Favorites") { Browser.front?.removeFavorite() },
+    ]
+    if !favorites.isEmpty { items.append(.separator()) }
+    items += favorites.map { page in Item(page.title) { showPage(page) } }
+    favoritesItem.submenu?.removeAllItems()
+    items.forEach { favoritesItem.submenu?.addItem($0) }
+}
+
 func buildMenus() {
+    favoritesChanged()
     let front = { Browser.front }
     let windows = menu("Windows", [responder("Miniaturize Window", "performMiniaturize:", "m"), Item("Close Window", "w") { NSApp.keyWindow?.performClose(nil) }])
     NSApp.mainMenu = NSMenu()
@@ -402,8 +645,9 @@ func buildMenus() {
         menu("Go", [
             Item("Back", "[") { front()?.web.goBack() }, Item("Forward", "]") { front()?.web.goForward() },
             Item("Home", "h", [.command, .shift]) { front()?.web.load(URLRequest(url: homePage)) },
+            .separator(), Item("History…", "y") { HistoryPanel.show() },
         ]),
-        windows,
+        favoritesItem, windows,
     ].forEach(NSApp.mainMenu!.addItem)
     NSApp.windowsMenu = windows.submenu
 }
