@@ -96,9 +96,10 @@ enum Icons {
         var rect = NSRect(x: 0, y: 0, width: 128, height: 128)
         guard let cg = icon.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { return nil }
         var image = CIImage(cgImage: cg)
-        image = image.applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0, kCIInputContrastKey: 1.7, kCIInputBrightnessKey: -0.06])
-        image = image.applyingFilter("CIUnsharpMask", parameters: [kCIInputRadiusKey: 2.0, kCIInputIntensityKey: 1.6])
-        image = image.applyingFilter("CIUnsharpMask", parameters: [kCIInputRadiusKey: 0.8, kCIInputIntensityKey: 1.0])
+        // Mild contrast so the midtones survive; the edge crispness comes from sharpening, not from contrast
+        image = image.applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0, kCIInputContrastKey: 1.15, kCIInputBrightnessKey: 0])
+        image = image.applyingFilter("CIUnsharpMask", parameters: [kCIInputRadiusKey: 1.5, kCIInputIntensityKey: 0.9])
+        image = image.applyingFilter("CIUnsharpMask", parameters: [kCIInputRadiusKey: 0.6, kCIInputIntensityKey: 0.7])
         let context = CIContext()
         guard let out = context.createCGImage(image.cropped(to: CGRect(x: 0, y: 0, width: cg.width, height: cg.height)), from: CGRect(x: 0, y: 0, width: cg.width, height: cg.height)) else { return nil }
         return NSImage(cgImage: out, size: NSSize(width: 96, height: 96))
