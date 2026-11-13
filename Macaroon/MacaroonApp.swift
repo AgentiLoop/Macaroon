@@ -167,6 +167,13 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
                 defaults write com.macaroon.NeXTWorkspace DockApps -array ${(f)"$(print -r -- "$dock" | sed "s|^$old$|$HOME/Applications/$name.app|")"}
             fi
         done
+        # NeXT Apps belongs in the NeXT Dock even when a saved Dock never had Apple's Apps: add it after the Finder
+        apps="$HOME/Applications/NeXT Apps.app"
+        dock=$(defaults read com.macaroon.NeXTWorkspace DockApps 2>/dev/null | grep -o '"[^"]*"' | tr -d '"')
+        if [ -d "$apps" ] && [ -n "$dock" ] && ! print -r -- "$dock" | grep -qxF "$apps"; then
+            tiles=(${(f)dock})
+            defaults write com.macaroon.NeXTWorkspace DockApps -array "$tiles[1]" "$apps" "${(@)tiles[2,-1]}"
+        fi
         agent="$HOME/Library/LaunchAgents/com.macaroon.NeXTWorkspace.plist"
         cat > "$agent" <<EOF
     <?xml version="1.0" encoding="UTF-8"?>

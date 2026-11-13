@@ -301,9 +301,13 @@ final class AppsWindow: NSObject, NSWindowDelegate, NSSearchFieldDelegate, NSTex
         highlightCategory()
     }
 
-    /// The chosen category's button is drawn disabled-looking (dark title) to show it's the current one.
+    /// The chosen category's button is pushed in and lit with a black title; the others have mid-grey titles.
     private func highlightCategory() {
-        for button in buttons { button.isEnabled = button.title != category }
+        for button in buttons {
+            let chosen = button.title == category
+            button.latched = chosen
+            button.textColor = chosen ? .black : NSColor(calibratedWhite: 0.4, alpha: 1)
+        }
     }
 
     func open(_ app: App) {

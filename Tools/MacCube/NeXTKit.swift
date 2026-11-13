@@ -34,6 +34,10 @@ func centered(_ text: String, in r: NSRect, font: NSFont, color: NSColor = .blac
 final class NeXTButton: NSView {
     var title: String { didSet { needsDisplay = true } }
     var isEnabled = true { didSet { needsDisplay = true } }
+    /// Title colour while enabled (NeXT Apps' category shelf greys out the unchosen ones).
+    var textColor = NSColor.black { didSet { needsDisplay = true } }
+    /// Drawn pushed in and lit, like a NeXT button that's on (the chosen category).
+    var latched = false { didSet { needsDisplay = true } }
     let action: () -> Void
     private var pressed = false
 
@@ -45,8 +49,9 @@ final class NeXTButton: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        bevel(bounds, sunken: pressed, color: pressed ? .white : face)
-        centered(title, in: bounds, font: boldFont, color: isEnabled ? .black : dark)
+        let down = pressed || latched
+        bevel(bounds, sunken: down, color: down ? .white : face)
+        centered(title, in: bounds, font: boldFont, color: isEnabled ? textColor : dark)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -257,6 +262,13 @@ final class NeXTScroller: NSScroller {
     override class func scrollerWidth(for controlSize: NSControl.ControlSize, scrollerStyle: NSScroller.Style) -> CGFloat { bar + 1 }
     override class var isCompatibleWithOverlayScrollers: Bool { false }
     override var isFlipped: Bool { false }
+    // AppKit redraws only the old and new knob areas when scrolling (on a layer-backed window), which left pieces
+    // of old knobs on the track: always redraw the whole scroller, and never let AppKit draw its own knob.
+    override var doubleValue: Double { didSet { needsDisplay = true } }
+    override var knobProportion: CGFloat { didSet { needsDisplay = true } }
+    override func setNeedsDisplay(_ invalidRect: NSRect) { super.setNeedsDisplay(bounds) }
+    override func drawKnob() {}
+    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {}
 
     private let bar = NeXTScroller.bar
     private var downButton: NSRect { NSRect(x: 0, y: 0, width: bar, height: bar) }
