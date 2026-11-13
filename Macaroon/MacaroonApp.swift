@@ -40,18 +40,16 @@ struct Snapshot: Identifiable, Hashable {
 }
 
 /// macOS guests use Apple's Mac platform; Linux and Windows ARM boot from an ISO through the generic EFI platform.
-/// TinyMac is our own tiny Linux (Tools/TinyMac) on the same EFI platform, installed from its built disk image.
-/// TinyMacII is a second macOS VM pinned to macOS 27.2.1, given a NeXTSTEP look by a setup script in the shared folder.
+/// MacCube is a second macOS VM pinned to macOS 27.2.1, given a NeXTSTEP look by a setup script in the shared folder.
 enum GuestOS: String, CaseIterable, Identifiable {
-    case macOS, linux, windows, tinyMac, tinyMacII
+    case macOS, linux, windows, macCube
     var id: String { rawValue }
     var title: String {
         switch self {
         case .macOS: "macOS"
         case .linux: "Linux"
         case .windows: "Windows ARM"
-        case .tinyMac: "TinyMac"
-        case .tinyMacII: "TinyMacII"
+        case .macCube: "MacCube"
         }
     }
     var folder: String {
@@ -59,12 +57,11 @@ enum GuestOS: String, CaseIterable, Identifiable {
         case .macOS: "VM"
         case .linux: "Linux"
         case .windows: "Windows"
-        case .tinyMac: "TinyMac"
-        case .tinyMacII: "TinyMacII"
+        case .macCube: "MacCube"
         }
     }
     /// Runs on Apple's Mac platform (IPSW install, VZMacOSBootLoader).
-    var isMac: Bool { self == .macOS || self == .tinyMacII }
+    var isMac: Bool { self == .macOS || self == .macCube }
 }
 
 @MainActor
@@ -76,28 +73,28 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     @Published var busy = false
     @Published var machine: VZVirtualMachine?
     @Published var running = false
-    @Published var guest = GuestOS(rawValue: UserDefaults.standard.string(forKey: "guest") ?? "") ?? .macOS {
+    @Published var guest = GuestOS(rawValue: UserDefaults.standard.string(forKey: "guest") == "tinyMacII" ? "macCube" : UserDefaults.standard.string(forKey: "guest") ?? "") ?? .macOS {
         didSet {
             UserDefaults.standard.set(guest.rawValue, forKey: "guest")
             loadSnapshots()
             status = isInstalled ? "\(guest.title) VM installed. Press Start." : guest == .macOS
                 ? "Choose a macOS IPSW from Apple, then Download & Install."
-                : guest == .tinyMacII ? "Download & Install macOS \(Self.tinyMacIIVersion) for TinyMacII."
-                : guest == .tinyMac ? "Press Install TinyMac." : "Choose an ARM64 \(guest.title) installer ISO."
+                : guest == .macCube ? "Download & Install macOS \(Self.macCubeVersion) for MacCube."
+                : "Choose an ARM64 \(guest.title) installer ISO."
             // Show the cached list for the new guest right away; fetch only if it was never loaded
             showISOs()
             if guest == .linux || guest == .windows, isoCache[guest] == nil { Task { await loadISOCatalog(guest) } }
             pickIPSW()
         }
     }
-    /// The IPSW menu: every Virtual Mac IPSW for macOS, only the pinned release for TinyMacII.
-    static let tinyMacIIVersion = "27.2.1"
-    /// Run once inside TinyMacII: NeXTSTEP-style Dock on the right edge with big fixed tiles, dark graphite
+    /// The IPSW menu: every Virtual Mac IPSW for macOS, only the pinned release for MacCube.
+    static let macCubeVersion = "27.2.1"
+    /// Run once inside MacCube: NeXTSTEP-style Dock on the right edge with big fixed tiles, dark graphite
     /// appearance, solid NeXT grey desktop, high contrast borders and no transparency. Best effort: settings
     /// macOS protects (accessibility) are skipped with a note instead of failing.
     static let nextLookScript = #"""
     #!/bin/zsh
-    # TinyMacII: give macOS a NeXTSTEP look. Safe to run again.
+    # MacCube: give macOS a NeXTSTEP look. Safe to run again.
     echo "Setting up the NeXT look…"
     # The macOS Dock: along the bottom, auto-hidden (point at the bottom edge to show it; Option-Command-D turns
     # hiding on and off), 64-pt tiles, no magnification. NeXT Workspace's tile Dock stays on the right.
@@ -141,7 +138,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     # Home folder as a Dock tile, like NeXT's file viewer tile (added once)
     defaults read com.apple.dock persistent-others 2>/dev/null | grep -q "file://$HOME/\"" || defaults write com.apple.dock persistent-others -array-add \
         "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>file://$HOME/</string><key>_CFURLStringType</key><integer>15</integer></dict><key>file-label</key><string>Home</string><key>displayas</key><integer>1</integer><key>showas</key><integer>2</integer><key>arrangement</key><integer>1</integer></dict><key>tile-type</key><string>directory-tile</string></dict>"
-    # NeXT Workspace (Tools/TinyMacII): NeXTSTEP's tile Dock on the right and its vertical main menu at the top
+    # NeXT Workspace (Tools/MacCube): NeXTSTEP's tile Dock on the right and its vertical main menu at the top
     # left, started at every login. It replaces the macOS Dock, which is pushed out of the way.
     src="/Volumes/My Shared Files/NeXT Workspace.app"
     # Copies an app from the shared folder without quarantine or other attributes, then re-signs it here (ad hoc,
@@ -155,7 +152,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         touch "$2"
         /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$2" 2>/dev/null
         echo "Installed ${2:t} (build $(defaults read "$2/Contents/Info" CFBundleVersion 2>/dev/null))"
-        [ -f "$2/Contents/Resources/Assets.car" ] || echo "  WARNING: ${2:t} has no icon (no Assets.car in $1); rebuild with Tools/TinyMacII/build.sh"
+        [ -f "$2/Contents/Resources/Assets.car" ] || echo "  WARNING: ${2:t} has no icon (no Assets.car in $1); rebuild with Tools/MacCube/build.sh"
     }
     if [ -d "$src" ]; then
         mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
@@ -187,14 +184,14 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         launchctl bootstrap gui/$(id -u) "$agent"
         echo "NeXT Workspace installed. Allow it in System Settings > Privacy & Security > Accessibility so its menu can show each app's menus."
     else
-        echo "Skipped: NeXT Workspace.app is not in the Shared Folder (build it on the Mac with Tools/TinyMacII/build.sh)"
+        echo "Skipped: NeXT Workspace.app is not in the Shared Folder (build it on the Mac with Tools/MacCube/build.sh)"
     fi
     # Icon Services caches app icons by bundle id and version; restart it so replaced apps show their new icons
     killall iconservicesagent 2>/dev/null
     killall Dock SystemUIServer Finder 2>/dev/null
     echo "Done. Log out and back in for the dark appearance to reach every app."
     """#
-    var ipswChoices: [RestoreImage] { guest == .tinyMacII ? images.filter { $0.version == Self.tinyMacIIVersion } : images }
+    var ipswChoices: [RestoreImage] { guest == .macCube ? images.filter { $0.version == Self.macCubeVersion } : images }
     private func pickIPSW() {
         if let selected, ipswChoices.contains(selected) { return }
         selected = ipswChoices.first
@@ -370,28 +367,6 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
                 try createEFIMachine()
             }
             try iso.path.write(to: isoPathURL, atomically: true, encoding: .utf8)
-            objectWillChange.send()
-        } catch {
-            status = "Failed: \(error.localizedDescription)"
-            return
-        }
-        await start()
-    }
-
-    /// The image Tools/TinyMac/build.sh produces.
-    var tinyMacImage: URL { base.appendingPathComponent("TinyMac/TinyMac.img") }
-
-    /// Copies the built TinyMac image in as a fresh VM's disk (a clone on APFS, so it's instant) and boots it.
-    func installTinyMac() async {
-        guard FileManager.default.fileExists(atPath: tinyMacImage.path) else {
-            status = "No TinyMac image yet. Build it with Tools/TinyMac/build.sh."
-            return
-        }
-        do {
-            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            try? FileManager.default.removeItem(at: diskURL)
-            try FileManager.default.copyItem(at: tinyMacImage, to: diskURL)
-            try createEFIMachine()
             objectWillChange.send()
         } catch {
             status = "Failed: \(error.localizedDescription)"
@@ -701,8 +676,8 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         config.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
         try addCommonDevices(to: config)
         config.socketDevices = [VZVirtioSocketDeviceConfiguration()] // Windows guest agent, Linux GPU OpenGL (LinuxGL)
-        if guest == .linux || guest == .tinyMac {
-            // Clipboard sharing through the SPICE agent port; Ubuntu Desktop's and TinyMac's spice-vdagent pick it up
+        if guest == .linux {
+            // Clipboard sharing through the SPICE agent port; Ubuntu Desktop's spice-vdagent picks it up
             let spice = VZSpiceAgentPortAttachment()
             spice.sharesClipboard = true
             let port = VZVirtioConsolePortConfiguration()
@@ -811,13 +786,11 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
                     try? LinuxGL.guestSetupScript.write(to: sharedURL.appendingPathComponent("Set Up 3D.sh"), atomically: true, encoding: .utf8)
                     status += ". GPU OpenGL: run sudo sh \"/mnt/Set Up 3D.sh\" once, then macaroon-gl <app>"
                 }
-            case .tinyMac:
-                status = "Running TinyMac. Files in Shared Folder appear in its Shared Folder."
-            case .tinyMacII:
+            case .macCube:
                 let script = sharedURL.appendingPathComponent("Set Up NeXT Look.command")
                 try? Self.nextLookScript.write(to: script, atomically: true, encoding: .utf8)
                 try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
-                status = "Running TinyMacII. For the NeXT look, double-click Set Up NeXT Look.command in /Volumes/My Shared Files."
+                status = "Running MacCube. For the NeXT look, double-click Set Up NeXT Look.command in /Volumes/My Shared Files."
             case .windows:
                 status = setupPhase == "media" ? "Installing Windows from Media.img (WinPE, unattended). The VM powers off when done." : "Running."
                 if setupPhase == nil {
@@ -1182,10 +1155,6 @@ struct ContentView: View {
                     .disabled(vm.busy || vm.running)
                     Button("Download & Install") { Task { await vm.downloadAndInstall() } }
                         .disabled(vm.busy || vm.running || vm.selected == nil)
-                } else if vm.guest == .tinyMac {
-                    Button(vm.isInstalled ? "Reinstall TinyMac" : "Install TinyMac") { Task { await vm.installTinyMac() } }
-                        .help("Copies the image built by Tools/TinyMac/build.sh in as this VM's disk")
-                        .disabled(vm.busy || vm.running)
                 } else {
                     Picker("ISO", selection: $vm.selectedISO) {
                         if vm.isos.isEmpty { Text("Loading…").tag(InstallerISO?.none) }
@@ -1228,7 +1197,7 @@ struct ContentView: View {
                     Button("Run Command…") { runCommand() }
                         .disabled(!vm.running)
                 }
-                if vm.guest == .linux || vm.guest == .tinyMac {
+                if vm.guest == .linux {
                     Button("Paste") { vm.typeClipboard() }
                         .help("Types the Mac clipboard's text into Linux")
                         .disabled(!vm.running)
