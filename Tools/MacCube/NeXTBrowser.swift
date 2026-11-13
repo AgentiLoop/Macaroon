@@ -233,8 +233,10 @@ final class Browser: NSObject, NSWindowDelegate, NSTextFieldDelegate, WKNavigati
             controller.addUserScript(scrollReportScript)
             controller.add(scrollReports, name: "pageScroll")
         }
+        configuration.preferences.setValue(true, forKey: "developerExtrasEnabled") // Inspect Element in the context menu
         web = PageView(frame: .zero, configuration: configuration)
         super.init()
+        web.isInspectable = true // Safari's Develop menu can inspect the page too
         let body = window.body, w = body.bounds.width, h = body.bounds.height
         let toolbar: CGFloat = 36, favoritesHeight: CGFloat = 26, statusHeight: CGFloat = 22
         window.isReleasedWhenClosed = false
@@ -372,6 +374,14 @@ final class Browser: NSObject, NSWindowDelegate, NSTextFieldDelegate, WKNavigati
     }
 
     func zoom(_ factor: CGFloat?) { web.pageZoom = factor.map { min(3, max(0.5, web.pageZoom * $0)) } ?? 1 }
+
+    /// Opens WebKit's Web Inspector on this page (View > Web Inspector, or Inspect Element in the page's context
+    /// menu). WKWebView has no public call to open it, so this asks its inspector object to show itself.
+    func showInspector() {
+        let show = Selector(("show"))
+        guard let inspector = web.value(forKey: "_inspector") as? NSObject, inspector.responds(to: show) else { return NSSound.beep() }
+        inspector.perform(show)
+    }
 
     func find(again: Bool) {
         if !again || Browser.lastFind.isEmpty {
@@ -641,6 +651,7 @@ func buildMenus() {
             Item("Reload", "r") { front()?.web.reload() }, Item("Stop", ".") { front()?.web.stopLoading() }, .separator(),
             Item("Larger Text", "+") { front()?.zoom(1.1) }, Item("Smaller Text", "-") { front()?.zoom(1 / 1.1) },
             Item("Actual Size", "0") { front()?.zoom(nil) },
+            .separator(), Item("Web Inspector", "i", [.command, .option]) { front()?.showInspector() },
         ]),
         menu("Go", [
             Item("Back", "[") { front()?.web.goBack() }, Item("Forward", "]") { front()?.web.goForward() },
