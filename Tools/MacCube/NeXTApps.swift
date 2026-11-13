@@ -1,9 +1,10 @@
 // NeXT Apps for MacCube: macOS's Apps (Launchpad) browser dressed as a NeXTSTEP app. Square NeXT window with a
-// search field and a shelf of category buttons (All, Productivity & Finance, Utilities, Creativity, Information &
-// Reading, Social, Entertainment, Other), then every installed app as a raised grey tile with its name, in a
+// search field and a shelf of category buttons (All, Productivity, Utilities, Creativity, Reading, Social,
+// Entertainment, Other), then every installed app as a raised grey tile with its name, in a
 // scroll view with the NeXT scroller on the left. Recently opened apps lead the list. Click a tile to open the app;
 // drag it onto NeXT Workspace's Dock to keep it there. Icons are greyscale, like the NeXT Dock, except the NeXT apps'.
 import AppKit
+import CoreImage
 
 // MARK: Apps
 
@@ -15,7 +16,7 @@ struct App: Hashable {
 }
 
 enum Catalog {
-    static let categories = ["All", "Productivity & Finance", "Utilities", "Creativity", "Information & Reading", "Social", "Entertainment", "Other"]
+    static let categories = ["All", "Productivity", "Utilities", "Creativity", "Reading", "Social", "Entertainment", "Other"]
     static let folders = ["/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities",
                           NSHomeDirectory() + "/Applications"]
 
@@ -24,10 +25,10 @@ enum Catalog {
         let fallback: [String: String] = [
             "com.apple.calculator": "Utilities", "com.apple.clock": "Utilities", "com.apple.findmy": "Utilities",
             "com.apple.DiskUtility": "Utilities", "com.apple.Passwords": "Utilities", "com.apple.ScreenContinuity": "Utilities",
-            "com.apple.Magnifier": "Utilities", "com.apple.weather": "Information & Reading", "com.apple.stocks": "Productivity & Finance",
-            "com.apple.podcasts": "Entertainment", "com.apple.mobilephone": "Social", "com.apple.Home": "Productivity & Finance",
-            "com.apple.Safari": "Information & Reading", "com.apple.finder": "Utilities",
-            "com.macaroon.NeXTBrowser": "Information & Reading", "com.macaroon.NeXTEdit": "Productivity & Finance",
+            "com.apple.Magnifier": "Utilities", "com.apple.weather": "Reading", "com.apple.stocks": "Productivity",
+            "com.apple.podcasts": "Entertainment", "com.apple.mobilephone": "Social", "com.apple.Home": "Productivity",
+            "com.apple.Safari": "Reading", "com.apple.finder": "Utilities",
+            "com.macaroon.NeXTBrowser": "Reading", "com.macaroon.NeXTEdit": "Productivity",
             "com.macaroon.NeXTTerminal": "Utilities", "com.macaroon.NeXTCalculator": "Utilities",
             "com.macaroon.NeXTWorkspace": "Utilities", "com.macaroon.NeXTApps": "Utilities",
         ]
@@ -35,11 +36,11 @@ enum Catalog {
             return identifier.flatMap { fallback[$0] } ?? "Other"
         }
         switch kind {
-        case "productivity", "finance", "business": return "Productivity & Finance"
+        case "productivity", "finance", "business": return "Productivity"
         case "utilities", "developer-tools": return "Utilities"
         case "graphics-design", "photography", "video": return "Creativity"
         case "reference", "news", "books", "education", "weather", "lifestyle", "travel", "medical", "healthcare-fitness":
-            return "Information & Reading"
+            return "Reading"
         case "social-networking": return "Social"
         case "entertainment", "music", "sports", "games": return "Entertainment"
         default: return kind.hasSuffix("-games") ? "Entertainment" : identifier.flatMap { fallback[$0] } ?? "Other"
@@ -84,16 +85,23 @@ enum Icons {
         if app.identifier?.hasPrefix("com.macaroon.") == true {
             image = icon
         } else {
-            image = NSImage(size: NSSize(width: 96, height: 96), flipped: false) { bounds in
-                icon.draw(in: bounds)
-                NSColor.black.setFill()
-                bounds.fill(using: .saturation) // keep the brightness, drop the colour
-                icon.draw(in: bounds, from: .zero, operation: .destinationIn, fraction: 1) // restore the shape
-                return true
-            }
+            image = hardGrey(icon) ?? icon
         }
         cache[app.url] = image
         return image
+    }
+
+    /// NeXT-style grey: no colour, strong contrast and sharpened edges, so the icon reads as hard line work.
+    private static func hardGrey(_ icon: NSImage) -> NSImage? {
+        var rect = NSRect(x: 0, y: 0, width: 128, height: 128)
+        guard let cg = icon.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { return nil }
+        var image = CIImage(cgImage: cg)
+        image = image.applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0, kCIInputContrastKey: 1.7, kCIInputBrightnessKey: -0.06])
+        image = image.applyingFilter("CIUnsharpMask", parameters: [kCIInputRadiusKey: 2.0, kCIInputIntensityKey: 1.6])
+        image = image.applyingFilter("CIUnsharpMask", parameters: [kCIInputRadiusKey: 0.8, kCIInputIntensityKey: 1.0])
+        let context = CIContext()
+        guard let out = context.createCGImage(image.cropped(to: CGRect(x: 0, y: 0, width: cg.width, height: cg.height)), from: CGRect(x: 0, y: 0, width: cg.width, height: cg.height)) else { return nil }
+        return NSImage(cgImage: out, size: NSSize(width: 96, height: 96))
     }
 }
 
