@@ -18,7 +18,7 @@ The Virtualization framework has a start option for this. Apple's DTS answer on 
 "VZMacOSVirtualMachineStartOptions.startUpFromMacOSRecovery is the way to go" (macOS 13+). VirtualBuddy uses
 the same option. In `Macaroon/MacaroonApp.swift`:
 
-- `start()` gets a `recovery: Bool = false` parameter. For macOS guests (`.macOS`, `.tinyMacII`) with
+- `start()` gets a `recovery: Bool = false` parameter. For macOS guests (`.macOS`, `.macCube`) with
   recovery set:
   ```swift
   let options = VZMacOSVirtualMachineStartOptions()
