@@ -1,7 +1,0 @@
-! Terminal and Xfe: Platinum grey, black text, like Mac OS 8.
-XTerm*background: white
-XTerm*foreground: black
-XTerm*faceName: DejaVu Sans Mono
-XTerm*faceSize: 11
-XTerm*scrollBar: true
-XTerm*rightScrollBar: true

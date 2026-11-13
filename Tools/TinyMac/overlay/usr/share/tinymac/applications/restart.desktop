@@ -1,5 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Restart
-Exec=doas /sbin/reboot
-Icon=system-reboot

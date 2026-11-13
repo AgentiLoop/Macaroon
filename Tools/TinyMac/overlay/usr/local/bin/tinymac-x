@@ -1,3 +1,0 @@
-#!/bin/sh
-# Started by init on tty1 (as root): X server on vt1, the desktop session as user mac. No login screen.
-exec /usr/bin/xinit /bin/su -l mac -c /usr/local/bin/tinymac-session -- /usr/bin/Xorg :0 vt1 -nolisten tcp -s 0 -dpms

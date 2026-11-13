@@ -1,5 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=SimpleText
-Exec=simpletext %f
-Icon=accessories-text-editor

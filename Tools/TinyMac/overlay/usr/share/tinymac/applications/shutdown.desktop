@@ -1,5 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Shut Down
-Exec=doas /sbin/poweroff
-Icon=system-shutdown
