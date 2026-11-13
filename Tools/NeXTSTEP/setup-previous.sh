@@ -6,6 +6,7 @@
 # Network: Ethernet is connected through SLiRP (NAT), which NeXTSTEP 3.3 configures by itself, and ~/Previous/Shared
 # is /Net/nfs in NeXTSTEP. Web browser: OmniWeb 2.7b3 for NeXT (m68k) is unpacked there, /Net/nfs/OmniWeb.app, from
 #   http://files.omnigroup.com/software/Archive/NEXTSTEP/OmniWeb/OmniWeb-2.7b3-N.tar.gz
+# Today's web in OmniWeb: `run` also starts webproxy.py on the Mac; in OmniWeb open http://10.0.2.2:3128/
 # Install steps in the emulator: 1 (English) → 1 (install on target 0) → 1 (start) → wait for "Completed",
 # then quit Previous and run `./setup-previous.sh run`.
 # Media (NeXTSTEP is Apple's; you supply it): ~/Downloads/NeXTSTEP33/{user.iso,developer.iso,3.3_Moto_Boot_Disk.img}
@@ -73,4 +74,6 @@ nMachineType = 1
 nCpuLevel = 4
 nCpuFreq = 25
 EOF
+# The web proxy for OmniWeb (webproxy.py; http://10.0.2.2:3128/ in NeXTSTEP), unless it is already listening
+nc -z 127.0.0.1 3128 2>/dev/null || "${0:A:h}/webproxy.py" >/tmp/next-webproxy.log 2>&1 &!
 open "$app"
