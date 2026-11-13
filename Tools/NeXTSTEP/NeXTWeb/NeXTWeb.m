@@ -5,9 +5,10 @@
  * changed.
  *
  * The window: Back, Forward and Reload (Stop while a page loads), the address field (an address, or words to
- * search the web for), the page with NeXT's scroller on its left, and a status line. Menus: Info, Edit, Go,
- * Windows, Hide, Quit. Arrow keys and the scroller scroll; Copy, Cut and Paste work between the page and the
- * NeXT's pasteboard.
+ * search the web for), the page with NeXT's scroller on its left, and a status line. Menus: Info, Edit, View,
+ * Go, Windows, Hide, Quit. Arrow keys and the scroller scroll; Copy, Cut and Paste work between the page and the
+ * NeXT's pasteboard; View zooms the page (below 100% more of it fits in the window). Downloads are saved by the
+ * Mac in the shared folder, /Net/nfs/Downloads, and the status line names them.
  *
  * Built in NeXTSTEP with cc from the Developer CD (build.sh). No nib: the window and menus are made here.
  * Defaults (owner NeXTWeb): Home, the page to start with; Server, the Mac's address (10.0.2.2 in Previous).
@@ -414,6 +415,9 @@ static void poll(DPSTimedEntry entry, double now, void *data)
 - stop:sender { say("stop"); return self; }
 - home:sender { say("open %.4000s", NXGetDefaultValue("NeXTWeb", "Home")); return self; }
 - openLocation:sender { [address selectText:self]; return self; }
+- zoomIn:sender { say("zoom 1"); return self; }
+- zoomOut:sender { say("zoom -1"); return self; }
+- actualSize:sender { say("zoom 0"); return self; }
 
 - reload:sender
 {
@@ -539,7 +543,7 @@ static void item(id menu, const char *title, SEL action, int key)
 
 static void makeMenus(void)
 {
-    id menu = [[Menu alloc] initTitle:"NeXTWeb"], info, edit, go, windows;
+    id menu = [[Menu alloc] initTitle:"NeXTWeb"], info, edit, view, go, windows;
 
     info = submenu(menu, "Info");
     item(info, "Info Panel...", @selector(info:), 0);
@@ -551,6 +555,12 @@ static void makeMenus(void)
     [edit addItem:"Paste" action:@selector(paste:) keyEquivalent:'v'];
     [edit addItem:"Select All" action:@selector(selectAll:) keyEquivalent:'a'];
     [edit sizeToFit];
+
+    view = submenu(menu, "View");
+    item(view, "Zoom In", @selector(zoomIn:), '+');
+    item(view, "Zoom Out", @selector(zoomOut:), '-');
+    item(view, "Actual Size", @selector(actualSize:), '0');
+    [view sizeToFit];
 
     go = submenu(menu, "Go");
     item(go, "Back", @selector(back:), '[');

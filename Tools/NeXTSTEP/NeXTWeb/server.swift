@@ -4,12 +4,12 @@
 // clicks, keys and scrolling come back and are passed on to the page.
 //   swiftc -O server.swift -o NeXTWebServer; ./NeXTWebServer
 // listens on 127.0.0.1:3129, which NeXTSTEP reaches as 10.0.2.2:3129 (Previous' SLiRP network). One web view per
-// connection.
+// connection. Downloads are saved in ~/Previous/Shared/Downloads, which NeXTSTEP has as /Net/nfs/Downloads.
 //
 // From NeXTWeb, one line of text each:
 //   size W H · open ADDRESS-OR-SEARCH · back · forward · reload · stop · mouse d|u|m|g X Y CLICKS (down, up,
 //   move, drag) · key CODE FLAGS · text HEX (paste) · copy · cut · selectall · scroll line|page ±1 ·
-//   scrollto PERMILLE · ack (the last frame is drawn)
+//   scrollto PERMILLE · zoom 1|-1|0 (in, out, actual size) · ack (the last frame is drawn)
 // To NeXTWeb, messages of a 4-letter tag, a 32-bit length and that many bytes (integers big-endian, text in the
 // NeXTSTEP encoding):
 //   SIZE "W H" · RECT x y w h (16 bits each) and its pixels · DONE (end of a frame; answered with ack) ·
@@ -35,6 +35,9 @@ let scroller = """
         return root;
     })();
     """
+
+/// The page zooms that Zoom In and Zoom Out step through.
+let zooms: [CGFloat] = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3]
 
 /// Mac key codes (US keyboard) for the characters NeXTWeb sends, so that pages see real key events.
 let keyCodes: [Character: UInt16] = {
@@ -66,7 +69,7 @@ final class PageWindow: NSWindow {
     override var canBecomeKey: Bool { true }
 }
 
-final class Session: NSObject, WKNavigationDelegate, WKUIDelegate {
+final class Session: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     static var all: [Session] = []
     let connection: NWConnection
     let window = PageWindow(contentRect: NSRect(x: -30000, y: -30000, width: 800, height: 600), styleMask: .borderless, backing: .buffered, defer: false)
@@ -75,7 +78,8 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var input = Data()
     private var shown: [UInt16] = []        // the frame NeXTWeb has
     private var told: [String: String] = [:]   // the last message of each kind NeXTWeb got
-    private var failure: String?            // why the last page didn't load
+    private var notice: String?            // for the status line: why the last page didn't load, or a download
+    private var downloads: [WKDownload: String] = [:]   // the files being downloaded, by name
     private var snapshotStarted: Date?      // a snapshot is being taken
     private var frameSent: Date?            // a frame is on its way and not yet drawn
     private var lastInput = Date()          // when NeXTWeb last asked for something
@@ -152,7 +156,7 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate {
         case "open" where parts.count == 2: open(parts[1])
         case "back": web.goBack()
         case "forward": web.goForward()
-        case "reload": failure = nil; web.reload()
+        case "reload": notice = nil; web.reload()
         case "stop": web.stopLoading()
         case "mouse" where words.count == 4: mouse(words[0], x: numbers[1], y: numbers[2], clicks: numbers[3])
         case "key" where numbers.count == 2: key(numbers[0], flags: numbers[1])
@@ -176,6 +180,9 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate {
             web.evaluateJavaScript("(() => { \(scroller) scroller.scrollBy({top: \(numbers[1]) * \(step), behavior: 'instant'}) })()")
         case "scrollto" where numbers.count == 1:
             web.evaluateJavaScript("(() => { \(scroller) scroller.scrollTo({top: (scroller.scrollHeight - scroller.clientHeight) * \(numbers[0]) / 1000, behavior: 'instant'}) })()")
+        case "zoom" where numbers.count == 1:
+            let at = zooms.firstIndex { $0 >= web.pageZoom - 0.001 } ?? zooms.count - 1
+            web.pageZoom = numbers[0] == 0 ? 1 : zooms[min(max(at + numbers[0], 0), zooms.count - 1)]
         case "ack": frameSent = nil
         default: break
         }
@@ -195,7 +202,7 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate {
             search.queryItems = [URLQueryItem(name: "q", value: text)]
             url = search.url
         }
-        failure = nil
+        notice = nil
         web.load(URLRequest(url: url!))
     }
 
@@ -268,7 +275,8 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate {
         say("TITL", web.title?.isEmpty == false ? web.title! : host.isEmpty ? "NeXTWeb" : host)
         say("ADDR", web.url?.absoluteString ?? "")
         say("NAVI", "\(web.canGoBack ? 1 : 0) \(web.canGoForward ? 1 : 0) \(web.isLoading ? 1 : 0)")
-        say("STAT", web.isLoading ? "Loading \(host)  \(Int(web.estimatedProgress * 100))%" : failure ?? (host.isEmpty ? "" : "Done  \(host)"))
+        let zoom = web.pageZoom == 1 ? "" : "   Zoom \(Int((web.pageZoom * 100).rounded()))%"
+        say("STAT", (web.isLoading ? "Loading \(host)  \(Int(web.estimatedProgress * 100))%" : notice ?? (host.isEmpty ? "" : "Done  \(host)")) + zoom)
 
         let now = Date()
         if let started = snapshotStarted, now.timeIntervalSince(started) < 5 { return }
@@ -397,25 +405,55 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     // MARK: Pages
 
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { failure = nil }
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { notice = nil }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failed(error) }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { failed(error) }
     private func failed(_ error: Error) {
-        if (error as NSError).code != NSURLErrorCancelled { failure = error.localizedDescription }
+        let error = error as NSError
+        // not failures: a load that was stopped, and one that became a download (WebKit's "Frame load interrupted")
+        if error.code == NSURLErrorCancelled || (error.domain == "WebKitErrorDomain" && error.code == 102) { return }
+        notice = error.localizedDescription
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { webView.reload() }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         let scheme = navigationAction.request.url?.scheme?.lowercased() ?? ""
-        if ["http", "https", "about", "data", "blob"].contains(scheme) { return decisionHandler(.allow) }
-        failure = "NeXTWeb can't open \(scheme): addresses"
+        if ["http", "https", "about", "data", "blob"].contains(scheme) { return decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow) }
+        notice = "NeXTWeb can't open \(scheme): addresses"
         decisionHandler(.cancel)
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
-        if navigationResponse.canShowMIMEType { return decisionHandler(.allow) }
-        failure = "NeXTWeb can't show this kind of file (\(navigationResponse.response.mimeType ?? "unknown"))"
-        decisionHandler(.cancel)
+        let disposition = (navigationResponse.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition") ?? ""
+        decisionHandler(navigationResponse.canShowMIMEType && !disposition.lowercased().hasPrefix("attachment") ? .allow : .download)
+    }
+
+    // MARK: Downloads
+
+    // Files a page can't show, attachments and download links are saved in the folder NeXTSTEP shares with the Mac.
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self }
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self }
+
+    func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+        let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Previous/Shared/Downloads")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let name = suggestedFilename.replacingOccurrences(of: "/", with: "-") as NSString
+        var file = folder.appendingPathComponent(name as String), copy = 1
+        while FileManager.default.fileExists(atPath: file.path) {    // a file of that name is there: name-2, name-3…
+            copy += 1
+            file = folder.appendingPathComponent("\(name.deletingPathExtension)-\(copy)" + (name.pathExtension.isEmpty ? "" : "." + name.pathExtension))
+        }
+        downloads[download] = file.lastPathComponent
+        notice = "Downloading \(file.lastPathComponent)"
+        completionHandler(file)
+    }
+
+    func downloadDidFinish(_ download: WKDownload) {
+        if let name = downloads.removeValue(forKey: download) { notice = "Downloaded \(name) to /Net/nfs/Downloads" }
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        notice = "Couldn't download \(downloads.removeValue(forKey: download) ?? "the file"): \(error.localizedDescription)"
     }
 
     /// Links and scripts that want a new window get this one.
