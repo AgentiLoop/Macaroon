@@ -391,6 +391,8 @@ static void poll(DPSTimedEntry entry, double now, void *data)
 
 - appDidInit:sender
 {
+    /* a window made in code draws nothing by itself: without this the title bar, buttons and address field stay blank */
+    [window display];
     connectToServer();
     say("open %.4000s", NXGetDefaultValue("NeXTWeb", "Home"));
     [window makeKeyAndOrderFront:self];

@@ -76,4 +76,6 @@ nCpuFreq = 25
 EOF
 # The web proxy for OmniWeb (webproxy.py; http://10.0.2.2:3128/ in NeXTSTEP), unless it is already listening
 nc -z 127.0.0.1 3128 2>/dev/null || "${0:A:h}/webproxy.py" >/tmp/next-webproxy.log 2>&1 &!
+# NeXTWeb's web engine (NeXTWeb/server.swift, built by NeXTWeb/build.sh; 10.0.2.2:3129 in NeXTSTEP), likewise
+nc -z 127.0.0.1 3129 2>/dev/null || { [ -x "$HOME/Previous/NeXTWebServer" ] && "$HOME/Previous/NeXTWebServer" >/tmp/nextweb-server.log 2>&1 &! }
 open "$app"
