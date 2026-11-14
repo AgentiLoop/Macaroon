@@ -9,7 +9,8 @@
 // From NeXTWeb, one line of text each:
 //   size W H · open ADDRESS-OR-SEARCH · back · forward · reload · stop · mouse d|u|m|g X Y CLICKS (down, up,
 //   move, drag) · key CODE FLAGS · text HEX (paste) · copy · cut · selectall · scroll line|page ±1 ·
-//   scrollto PERMILLE · zoom 1|-1|0 (in, out, actual size) · ack (the last frame is drawn)
+//   scrollto PERMILLE · zoom 1|-1|0 (in, out, actual size) · smooth PERCENT (text smoothing: 100 as WebKit
+//   draws it, 0 off) · ack (the last frame is drawn)
 // To NeXTWeb, messages of a 4-letter tag, a 32-bit length and that many bytes (integers big-endian, text in the
 // NeXTSTEP encoding):
 //   SIZE "W H" · RECT x y w h (16 bits each) and its pixels · DONE (end of a frame; answered with ack) ·
@@ -38,6 +39,17 @@ let scroller = """
 
 /// The page zooms that Zoom In and Zoom Out step through.
 let zooms: [CGFloat] = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3]
+
+/// Turns text smoothing off in a page: a style sheet that also overrules the page's own choice.
+let smoothingOff = """
+    (() => {
+        if (document.getElementById('nextweb-smoothing')) return;
+        const style = document.createElement('style');
+        style.id = 'nextweb-smoothing';
+        style.textContent = '*, *::before, *::after { -webkit-font-smoothing: none !important }';
+        (document.head || document.documentElement).appendChild(style);
+    })()
+    """
 
 /// Mac key codes (US keyboard) for the characters NeXTWeb sends, so that pages see real key events.
 let keyCodes: [Character: UInt16] = {
@@ -80,6 +92,7 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDel
     private var told: [String: String] = [:]   // the last message of each kind NeXTWeb got
     private var notice: String?            // for the status line: why the last page didn't load, or a download
     private var downloads: [WKDownload: String] = [:]   // the files being downloaded, by name
+    private var smoothing = 100             // text smoothing in percent (smooth)
     private var snapshotStarted: Date?      // a snapshot is being taken
     private var frameSent: Date?            // a frame is on its way and not yet drawn
     private var lastInput = Date()          // when NeXTWeb last asked for something
@@ -183,9 +196,20 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDel
         case "zoom" where numbers.count == 1:
             let at = zooms.firstIndex { $0 >= web.pageZoom - 0.001 } ?? zooms.count - 1
             web.pageZoom = numbers[0] == 0 ? 1 : zooms[min(max(at + numbers[0], 0), zooms.count - 1)]
+        case "smooth" where numbers.count == 1: smooth(numbers[0])
         case "ack": frameSent = nil
         default: break
         }
+    }
+
+    /// Text smoothing in percent. 100 is WebKit's own; 0 turns it off in the page, so that text has no grey
+    /// edges at all; in between, the edges are sharpened after the page is drawn (sharpen).
+    private func smooth(_ percent: Int) {
+        smoothing = min(max(percent, 0), 100)
+        let scripts = web.configuration.userContentController
+        scripts.removeAllUserScripts()
+        if smoothing == 0 { scripts.addUserScript(WKUserScript(source: smoothingOff, injectionTime: .atDocumentStart, forMainFrameOnly: false)) }
+        web.evaluateJavaScript(smoothing == 0 ? smoothingOff : "document.getElementById('nextweb-smoothing')?.remove()")
     }
 
     /// A web address, a host name, or words to search the web for.
@@ -276,7 +300,8 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDel
         say("ADDR", web.url?.absoluteString ?? "")
         say("NAVI", "\(web.canGoBack ? 1 : 0) \(web.canGoForward ? 1 : 0) \(web.isLoading ? 1 : 0)")
         let zoom = web.pageZoom == 1 ? "" : "   Zoom \(Int((web.pageZoom * 100).rounded()))%"
-        say("STAT", (web.isLoading ? "Loading \(host)  \(Int(web.estimatedProgress * 100))%" : notice ?? (host.isEmpty ? "" : "Done  \(host)")) + zoom)
+        let smooth = smoothing == 100 ? "" : smoothing == 0 ? "   Smoothing Off" : "   Smoothing \(smoothing)%"
+        say("STAT", (web.isLoading ? "Loading \(host)  \(Int(web.estimatedProgress * 100))%" : notice ?? (host.isEmpty ? "" : "Done  \(host)")) + zoom + smooth)
 
         let now = Date()
         if let started = snapshotStarted, now.timeIntervalSince(started) < 5 { return }
@@ -305,6 +330,7 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDel
             context.interpolationQuality = .high
             context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         }
+        if smoothing > 0, smoothing < 100 { Session.sharpen(&rgb, width: width, height: height, amount: 100 - smoothing) }
         var pixels = [UInt16](repeating: 0, count: width * height)
         rgb.withUnsafeBufferPointer { rgb in
             pixels.withUnsafeMutableBufferPointer { pixels in
@@ -316,6 +342,36 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDel
         return pixels
     }
     private static let nibble: [UInt16] = (0..<256).map { UInt16(($0 * 15 + 127) / 255) }
+
+    /// Text smoothing between 0 and 100%: every pixel that lies between its neighbours, as the grey edges of
+    /// smoothed text do, moves toward the darkest or the lightest of the 9 around it, whichever is nearer, by
+    /// `amount` percent. Flat areas stay as they are; edges in pictures get sharper too.
+    private static func sharpen(_ rgb: inout [UInt8], width: Int, height: Int, amount: Int) {
+        let source = rgb
+        source.withUnsafeBufferPointer { source in
+            rgb.withUnsafeMutableBufferPointer { rgb in
+                for y in 0..<height {
+                    let top = max(y - 1, 0), bottom = min(y + 1, height - 1)
+                    for x in 0..<width {
+                        let left = max(x - 1, 0), right = min(x + 1, width - 1)
+                        for channel in 0..<3 {
+                            var darkest = 255, lightest = 0
+                            for row in top...bottom {
+                                for column in left...right {
+                                    let value = Int(source[(row * width + column) * 4 + channel])
+                                    darkest = min(darkest, value)
+                                    lightest = max(lightest, value)
+                                }
+                            }
+                            let at = (y * width + x) * 4 + channel, value = Int(source[at])
+                            let nearer = value - darkest < lightest - value ? darkest : lightest
+                            rgb[at] = UInt8(value + (nearer - value) * amount / 100)
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /// Sends what differs between the frame NeXTWeb has and this one: bands of changed rows, each as narrow as
     /// its changes.
