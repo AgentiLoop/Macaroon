@@ -7,8 +7,9 @@
  * The window: Back, Forward and Reload (Stop while a page loads), the address field (an address, or words to
  * search the web for), the page with NeXT's scroller on its left, and a status line. Menus: Info, Edit, View,
  * Go, Windows, Hide, Quit. Arrow keys and the scroller scroll; Copy, Cut and Paste work between the page and the
- * NeXT's pasteboard; View zooms the page (below 100% more of it fits in the window). Downloads are saved by the
- * Mac in the shared folder, /Net/nfs/Downloads, and the status line names them.
+ * NeXT's pasteboard; View zooms the page (below 100% more of it fits in the window) and sets how smooth its text
+ * is (Text Smoothing, 100% to Off). Downloads are saved by the Mac in the shared folder, /Net/nfs/Downloads, and
+ * the status line names them.
  *
  * Built in NeXTSTEP with cc from the Developer CD (build.sh). No nib: the window and menus are made here.
  * Defaults (owner NeXTWeb): Home, the page to start with; Server, the Mac's address (10.0.2.2 in Previous).
@@ -418,6 +419,8 @@ static void poll(DPSTimedEntry entry, double now, void *data)
 - zoomIn:sender { say("zoom 1"); return self; }
 - zoomOut:sender { say("zoom -1"); return self; }
 - actualSize:sender { say("zoom 0"); return self; }
+/* View > Text Smoothing: an item's tag is its percentage, 0 for Off. */
+- smooth:sender { say("smooth %d", [[sender selectedCell] tag]); return self; }
 
 - reload:sender
 {
@@ -543,7 +546,9 @@ static void item(id menu, const char *title, SEL action, int key)
 
 static void makeMenus(void)
 {
-    id menu = [[Menu alloc] initTitle:"NeXTWeb"], info, edit, view, go, windows;
+    static const char *const smoothings[] = {"100%", "75%", "50%", "25%", "Off"};
+    id menu = [[Menu alloc] initTitle:"NeXTWeb"], info, edit, view, smoothing, go, windows;
+    int i;
 
     info = submenu(menu, "Info");
     item(info, "Info Panel...", @selector(info:), 0);
@@ -560,6 +565,11 @@ static void makeMenus(void)
     item(view, "Zoom In", @selector(zoomIn:), '+');
     item(view, "Zoom Out", @selector(zoomOut:), '-');
     item(view, "Actual Size", @selector(actualSize:), '0');
+    smoothing = submenu(view, "Text Smoothing");
+    for (i = 0; i < 5; i++) {
+        [[[smoothing addItem:smoothings[i] action:@selector(smooth:) keyEquivalent:0] setTarget:controller] setTag:100 - 25 * i];
+    }
+    [smoothing sizeToFit];
     [view sizeToFit];
 
     go = submenu(menu, "Go");
