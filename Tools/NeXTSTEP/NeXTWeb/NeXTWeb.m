@@ -159,8 +159,10 @@ static void drawPixels(int x, int y, int width, int height)
 static void receivedRect(const unsigned char *p, int length)
 {
     const unsigned char *end = p + length;
-    int x, y, width, height, left, row = 0, count;
-    unsigned short *out, pixel;
+    int x, y, width, height, left, row = 0, count, run, i;
+    unsigned short *out, pixel = 0;
+    unsigned long two = 0;
+    BOOL same;
     double began = 0, unpacked = 0;
 
     if (!pixels || length < 8) return;
@@ -172,22 +174,42 @@ static void receivedRect(const unsigned char *p, int length)
     if (!width || !height || x + width > pixelsWide || y + height > pixelsHigh) return;
     p += 8;
     out = pixels + y * pixelsWide + x;
-    left = width;
+    left = width;       /* pixels to the end of the row */
     while (p + 3 <= end && row < height) {
         count = *p++;
-        if (count < 128) {
-            for (count++; count > 0 && row < height && p + 2 <= end; count--) {
-                *out++ = (p[0] << 8) | p[1];
-                p += 2;
-                if (--left == 0) { left = width; row++; out += pixelsWide - width; }
-            }
-        } else {
+        same = count >= 128;
+        if (same) {
             pixel = (p[0] << 8) | p[1];
+            two = ((unsigned long)pixel << 16) | pixel;
             p += 2;
-            for (count -= 126; count > 0 && row < height; count--) {
-                *out++ = pixel;
-                if (--left == 0) { left = width; row++; out += pixelsWide - width; }
+            count -= 126;
+        } else {
+            count++;
+            if (count > (end - p) / 2) count = (end - p) / 2;
+        }
+        /* a row's part of the run at a time: filled 8 pixels at a time, or copied as it is (the 68040 has a
+         * pixel's two bytes in the order they arrive in, and reads them at odd addresses too) */
+        for (; count > 0 && row < height; count -= run) {
+            run = count < left ? count : left;
+            i = run;
+            if (same) {
+                for (; i >= 8; i -= 8) {
+                    ((unsigned long *)out)[0] = two;
+                    ((unsigned long *)out)[1] = two;
+                    ((unsigned long *)out)[2] = two;
+                    ((unsigned long *)out)[3] = two;
+                    out += 8;
+                }
+                for (; i > 0; i--) *out++ = pixel;
+            } else if (run >= 16) {
+                bcopy((char *)p, (char *)out, run * 2);
+                p += run * 2;
+                out += run;
+            } else {
+                for (; i > 0; i--) { *out++ = *(const unsigned short *)p; p += 2; }
             }
+            left -= run;
+            if (left == 0) { left = width; row++; out += pixelsWide - width; }
         }
     }
     if (timing) unpacked = milliseconds();
