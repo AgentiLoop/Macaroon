@@ -9,7 +9,8 @@
  * Go, Windows, Hide, Quit. Arrow keys and the scroller scroll; Copy, Cut and Paste work between the page and the
  * NeXT's pasteboard; View zooms the page (below 100% more of it fits in the window), sets how smooth its text
  * is (Text Smoothing, 100% to Off) and how many times a second at most it is drawn (Frame Rate, 5 to 60 fps).
- * Downloads are saved by the Mac in the shared folder, /Net/nfs/Downloads, and the status line names them.
+ * The rate it reaches is shown at the bottom right. Downloads are saved by the Mac in the shared folder,
+ * /Net/nfs/Downloads, and the status line names them.
  *
  * Built in NeXTSTEP with cc from the Developer CD (build.sh). No nib: the window and menus are made here.
  * Defaults (owner NeXTWeb): Home, the page to start with; Server, the Mac's address (10.0.2.2 in Previous).
@@ -27,7 +28,8 @@
 #define TOOLBAR 38      /* height of the row of buttons */
 #define STATUS 20       /* height of the status line */
 
-static id controller, window, page, address, status, scroller, backButton, forwardButton, reloadButton;
+static id controller, window, page, address, status, reached, scroller, backButton, forwardButton, reloadButton;
+static int drawn;                   /* frames drawn since the rate at the bottom right was last worked out */
 static int server = -1;             /* the socket to NeXTWebServer */
 static unsigned char *input;        /* what has arrived and isn't a whole message yet */
 static int inputLength, inputSize;
@@ -157,6 +159,7 @@ static void receivedMessage(const char *tag, const unsigned char *data, int leng
         /* the frame is on the screen: ready for the next one */
         [window flushWindow];
         NXPing();
+        drawn++;
         say("ack");
         return;
     }
@@ -372,13 +375,26 @@ static void received(int fd, void *data)
 @end
 
 /* A few times a second: the mouse, and a page's alert if one is waiting (shown from here, not while its message
- * is being handled). */
+ * is being handled). Once a second: how many frames a second were drawn, at the bottom right. */
 static void poll(DPSTimedEntry entry, double now, void *data)
 {
     static BOOL showing;
-    char *text;
+    static double since;
+    static int shown = -1;
+    char *text, rate[16];
+    int frames;
 
     [page trackMouse];
+    if (now - since >= 1) {
+        frames = since ? (int)(drawn / (now - since) + 0.5) : 0;
+        drawn = 0;
+        since = now;
+        if (frames != shown) {
+            shown = frames;
+            sprintf(rate, "%d fps", frames);
+            [reached setStringValue:rate];
+        }
+    }
     if (alert && !showing) {
         showing = YES;
         text = alert;
@@ -505,7 +521,7 @@ static void makeWindow(void)
     [address setAutosizing:NX_WIDTHSIZABLE | NX_MINYMARGINSIZABLE];
     [content addSubview:address];
 
-    NXSetRect(&rect, 6, 2, width - 12, STATUS - 4);
+    NXSetRect(&rect, 6, 2, width - 76, STATUS - 4);
     status = [[TextField alloc] initFrame:&rect];
     [status setEditable:NO];
     [status setSelectable:NO];
@@ -513,6 +529,17 @@ static void makeWindow(void)
     [status setBackgroundGray:NX_LTGRAY];
     [status setAutosizing:NX_WIDTHSIZABLE];
     [content addSubview:status];
+
+    /* the frames a second that are really drawn */
+    NXSetRect(&rect, width - 66, 2, 60, STATUS - 4);
+    reached = [[TextField alloc] initFrame:&rect];
+    [reached setEditable:NO];
+    [reached setSelectable:NO];
+    [reached setBezeled:NO];
+    [reached setBackgroundGray:NX_LTGRAY];
+    [reached setAlignment:NX_RIGHTALIGNED];
+    [reached setAutosizing:NX_MINXMARGINSIZABLE];
+    [content addSubview:reached];
 
     NXSetRect(&rect, 4, STATUS, width - 8, height - STATUS - TOOLBAR);
     bezel = [[BezelView alloc] initFrame:&rect];
