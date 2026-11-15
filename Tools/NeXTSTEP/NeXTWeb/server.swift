@@ -10,7 +10,7 @@
 //   size W H · open ADDRESS-OR-SEARCH · back · forward · reload · stop · mouse d|u|m|g X Y CLICKS (down, up,
 //   move, drag) · key CODE FLAGS · text HEX (paste) · copy · cut · selectall · scroll line|page ±1 ·
 //   scrollto PERMILLE · zoom 1|-1|0 (in, out, actual size) · smooth PERCENT (text smoothing: 100 as WebKit
-//   draws it, 0 off) · ack (the last frame is drawn)
+//   draws it, 0 off) · fps N (frames a second at most, 1 to 60; 5 to begin with) · ack (the last frame is drawn)
 // To NeXTWeb, messages of a 4-letter tag, a 32-bit length and that many bytes (integers big-endian, text in the
 // NeXTSTEP encoding):
 //   SIZE "W H" · RECT x y w h (16 bits each) and its pixels · DONE (end of a frame; answered with ack) ·
@@ -93,6 +93,7 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDel
     private var notice: String?            // for the status line: why the last page didn't load, or a download
     private var downloads: [WKDownload: String] = [:]   // the files being downloaded, by name
     private var smoothing = 100             // text smoothing in percent (smooth)
+    private var rate = 5                    // frames a second at most (fps)
     private var snapshotStarted: Date?      // a snapshot is being taken
     private var frameSent: Date?            // a frame is on its way and not yet drawn
     private var lastInput = Date()          // when NeXTWeb last asked for something
@@ -197,6 +198,10 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDel
             let at = zooms.firstIndex { $0 >= web.pageZoom - 0.001 } ?? zooms.count - 1
             web.pageZoom = numbers[0] == 0 ? 1 : zooms[min(max(at + numbers[0], 0), zooms.count - 1)]
         case "smooth" where numbers.count == 1: smooth(numbers[0])
+        case "fps" where numbers.count == 1:
+            rate = min(max(numbers[0], 1), 60)
+            timer?.invalidate()
+            timer = Timer.scheduledTimer(withTimeInterval: 1 / Double(rate), repeats: true) { [weak self] _ in self?.tick() }
         case "ack": frameSent = nil
         default: break
         }
@@ -292,8 +297,8 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDel
         connection.send(content: message(tag, text.data(using: .nextstep, allowLossyConversion: true) ?? Data()), completion: .idempotent)
     }
 
-    /// Five times a second: the page's title, address and state, and then how it looks now, once NeXTWeb has
-    /// drawn the frame before.
+    /// Five times a second, or as often as fps asked for: the page's title, address and state, and then how it
+    /// looks now, once NeXTWeb has drawn the frame before.
     private func tick() {
         let host = web.url?.host ?? ""
         say("TITL", web.title?.isEmpty == false ? web.title! : host.isEmpty ? "NeXTWeb" : host)
@@ -301,7 +306,8 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDel
         say("NAVI", "\(web.canGoBack ? 1 : 0) \(web.canGoForward ? 1 : 0) \(web.isLoading ? 1 : 0)")
         let zoom = web.pageZoom == 1 ? "" : "   Zoom \(Int((web.pageZoom * 100).rounded()))%"
         let smooth = smoothing == 100 ? "" : smoothing == 0 ? "   Smoothing Off" : "   Smoothing \(smoothing)%"
-        say("STAT", (web.isLoading ? "Loading \(host)  \(Int(web.estimatedProgress * 100))%" : notice ?? (host.isEmpty ? "" : "Done  \(host)")) + zoom + smooth)
+        let frames = rate == 5 ? "" : "   \(rate) fps"
+        say("STAT", (web.isLoading ? "Loading \(host)  \(Int(web.estimatedProgress * 100))%" : notice ?? (host.isEmpty ? "" : "Done  \(host)")) + zoom + smooth + frames)
 
         let now = Date()
         if let started = snapshotStarted, now.timeIntervalSince(started) < 5 { return }
@@ -420,10 +426,11 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDel
         }
         guard !data.isEmpty else { return }
         // A page that animates by itself gets a large frame every 1.5 seconds: more would keep the NeXT busy
-        // drawing. Small changes, and anything in the 2 seconds after input, go at once.
+        // drawing. Small changes, and anything in the 2 seconds after input, go at once. With a frame rate
+        // chosen (fps), large frames go at that rate too.
         let now = Date()
         if data.count > 8192 {
-            if now.timeIntervalSince(lastInput) > 2, now.timeIntervalSince(lastLarge) < 1.5 { return }
+            if rate == 5, now.timeIntervalSince(lastInput) > 2, now.timeIntervalSince(lastLarge) < 1.5 { return }
             lastLarge = now
         }
         if rects > 0 {
