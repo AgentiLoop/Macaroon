@@ -96,6 +96,7 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDel
     private var rate = 5                    // frames a second at most (fps)
     private var snapshotStarted: Date?      // a snapshot is being taken
     private var frameSent: Date?            // a frame is on its way and not yet drawn
+    private var late = false                // a snapshot was due while one was being taken or a frame was on its way
     private var lastInput = Date()          // when NeXTWeb last asked for something
     private var lastLarge = Date.distantPast   // when the last frame over 8 KB went out
     private var timer: Timer?
@@ -202,7 +203,9 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDel
             rate = min(max(numbers[0], 1), 60)
             timer?.invalidate()
             timer = Timer.scheduledTimer(withTimeInterval: 1 / Double(rate), repeats: true) { [weak self] _ in self?.tick() }
-        case "ack": frameSent = nil
+        case "ack":
+            frameSent = nil
+            if late { snapshot() }
         default: break
         }
     }
@@ -298,7 +301,7 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDel
     }
 
     /// Five times a second, or as often as fps asked for: the page's title, address and state, and then how it
-    /// looks now, once NeXTWeb has drawn the frame before.
+    /// looks now.
     private func tick() {
         let host = web.url?.host ?? ""
         say("TITL", web.title?.isEmpty == false ? web.title! : host.isEmpty ? "NeXTWeb" : host)
@@ -308,10 +311,18 @@ final class Session: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDel
         let smooth = smoothing == 100 ? "" : smoothing == 0 ? "   Smoothing Off" : "   Smoothing \(smoothing)%"
         let frames = rate == 5 ? "" : "   \(rate) fps"
         say("STAT", (web.isLoading ? "Loading \(host)  \(Int(web.estimatedProgress * 100))%" : notice ?? (host.isEmpty ? "" : "Done  \(host)")) + zoom + smooth + frames)
+        snapshot()
+    }
 
+    /// Takes a picture of the page and sends what changed. While one is being taken, or NeXTWeb hasn't drawn the
+    /// frame before, it is put off (late) until that frame is drawn (ack): waiting for the next tick instead
+    /// would cost a frame that takes a little longer than a tick every second one.
+    private func snapshot() {
         let now = Date()
+        late = true
         if let started = snapshotStarted, now.timeIntervalSince(started) < 5 { return }
         if let sent = frameSent, now.timeIntervalSince(sent) < 10 { return }
+        late = false
         snapshotStarted = now
         web.evaluateJavaScript("(() => { \(scroller) return [scroller.scrollTop, scroller.scrollHeight, scroller.clientHeight] })()") { [weak self] metrics, _ in
             guard let self else { return }
