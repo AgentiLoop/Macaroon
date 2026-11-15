@@ -13,13 +13,15 @@
  * /Net/nfs/Downloads, and the status line names them.
  *
  * Built in NeXTSTEP with cc from the Developer CD (build.sh). No nib: the window and menus are made here.
- * Defaults (owner NeXTWeb): Home, the page to start with; Server, the Mac's address (10.0.2.2 in Previous).
+ * Defaults (owner NeXTWeb): Home, the page to start with; Server, the Mac's address (10.0.2.2 in Previous);
+ * Timing, a file that gets a line for every frame with where its time went (frameDone), for making it faster.
  */
 #import <appkit/appkit.h>
 #import <libc.h>
 #import <stdarg.h>
 #import <signal.h>
 #import <sys/types.h>
+#import <sys/time.h>
 #import <sys/uio.h>
 #import <sys/socket.h>
 #import <netinet/in.h>
@@ -40,6 +42,41 @@ static BOOL loading;
 static char *alert;                 /* a page's alert, waiting to be shown */
 
 static void received(int fd, void *data);
+
+/* MARK: Timing */
+
+static FILE *timing;                /* the file of the default Timing, if there is one */
+static struct {
+    double began, left;             /* when its first bytes were read; when received was last done with it */
+    double waiting, reading, unpacking, drawing, finishing;     /* milliseconds, see frameDone */
+    int reads, bytes, rects, pixels;
+} frame;                            /* the frame that is arriving */
+
+static double milliseconds(void)
+{
+    struct timeval time;
+
+    gettimeofday(&time, NULL);
+    return time.tv_sec * 1000.0 + time.tv_usec / 1000.0;
+}
+
+/* A line for the frame that is now on the screen. `drew` is when its drawing was finished. The line: when the
+ * frame began (ms after the first one), its bytes, reads, rects and pixels, the ms it took in all, and of those:
+ * waiting for more of it to arrive, in read(), unpacking, drawing (NXDrawBitmap into the window's buffer),
+ * finishing (until the Window Server has drawn it all), flushing the buffer to the screen. What is left of the
+ * total is NeXTWeb's own time between those. */
+static void frameDone(double drew)
+{
+    static double first;
+    double done = milliseconds();
+
+    if (!first) first = frame.began;
+    fprintf(timing, "%.0f %d %d %d %d  %.1f  %.1f %.1f %.1f %.1f %.1f %.1f\n", frame.began - first, frame.bytes, frame.reads,
+            frame.rects, frame.pixels, done - frame.began, frame.waiting, frame.reading, frame.unpacking, frame.drawing,
+            frame.finishing, done - drew);
+    fflush(timing);
+    bzero((char *)&frame, sizeof frame);
+}
 
 static void disconnect(void)
 {
@@ -124,8 +161,10 @@ static void receivedRect(const unsigned char *p, int length)
     const unsigned char *end = p + length;
     int x, y, width, height, left, row = 0, count;
     unsigned short *out, pixel;
+    double began = 0, unpacked = 0;
 
     if (!pixels || length < 8) return;
+    if (timing) began = milliseconds();
     x = (p[0] << 8) | p[1];
     y = (p[2] << 8) | p[3];
     width = (p[4] << 8) | p[5];
@@ -151,9 +190,16 @@ static void receivedRect(const unsigned char *p, int length)
             }
         }
     }
+    if (timing) unpacked = milliseconds();
     [page lockFocus];
     drawPixels(x, y, width, height);
     [page unlockFocus];
+    if (timing) {
+        frame.unpacking += unpacked - began;
+        frame.drawing += milliseconds() - unpacked;
+        frame.rects++;
+        frame.pixels += width * height;
+    }
 }
 
 static void receivedMessage(const char *tag, const unsigned char *data, int length)
@@ -161,12 +207,20 @@ static void receivedMessage(const char *tag, const unsigned char *data, int leng
     char text[2048];
     int a = 0, b = 0, c = 0;
     id pasteboard;
+    double began, drew = 0;
 
     if (!strncmp(tag, "RECT", 4)) { receivedRect(data, length); return; }
     if (!strncmp(tag, "DONE", 4)) {
         /* the frame is on the screen: ready for the next one */
+        if (timing) {
+            began = milliseconds();
+            NXPing();
+            drew = milliseconds();
+            frame.finishing = drew - began;
+        }
         [window flushWindow];
         NXPing();
+        if (timing) frameDone(drew);
         drawn++;
         say("ack");
         return;
@@ -220,6 +274,7 @@ static void received(int fd, void *data)
     static BOOL busy;
     int count, at = 0, length;
     unsigned char *message;
+    double began = 0;
 
     if (busy) return;
     busy = YES;
@@ -227,11 +282,20 @@ static void received(int fd, void *data)
         inputSize = inputSize ? inputSize * 2 : 65536;
         input = (unsigned char *)realloc(input, inputSize);
     }
+    if (timing) {
+        began = milliseconds();
+        if (frame.began) frame.waiting += began - frame.left; else frame.began = began;
+    }
     count = read(fd, input + inputLength, inputSize - inputLength);
     if (count <= 0) {
         disconnect();
         busy = NO;
         return;
+    }
+    if (timing) {
+        frame.reading += milliseconds() - began;
+        frame.reads++;
+        frame.bytes += count;
     }
     inputLength += count;
     while (inputLength - at >= 8) {
@@ -244,6 +308,10 @@ static void received(int fd, void *data)
     if (at) {
         inputLength -= at;
         bcopy(input + at, input, inputLength);
+    }
+    if (timing) {
+        /* what came was no part of a frame (a title, the status line), or more of one is to come */
+        if (!inputLength && !frame.rects) bzero((char *)&frame, sizeof frame); else frame.left = milliseconds();
     }
     busy = NO;
 }
@@ -640,13 +708,18 @@ static void makeMenus(void)
 static NXDefaultsVector defaults = {
     {"Home", "https://duckduckgo.com/"},
     {"Server", "10.0.2.2"},
+    {"Timing", ""},
     {NULL, NULL}
 };
 
 void main(int argc, char *argv[])
 {
+    const char *file;
+
     NXApp = [Application new];
     NXRegisterDefaults("NeXTWeb", defaults);
+    file = NXGetDefaultValue("NeXTWeb", "Timing");
+    if (file && *file) timing = fopen(file, "w");
     signal(SIGPIPE, SIG_IGN);
     controller = [[Controller alloc] init];
     makeWindow();
