@@ -20,6 +20,7 @@
 #import <stdarg.h>
 #import <signal.h>
 #import <sys/types.h>
+#import <sys/uio.h>
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <arpa/inet.h>
@@ -51,8 +52,15 @@ static void disconnect(void)
 
 static void sendLine(const char *line)
 {
+    struct iovec parts[2];
+
     if (server < 0) return;
-    if (write(server, line, strlen(line)) < 0 || write(server, "\n", 1) < 0) disconnect();
+    /* in one write, so that the line leaves as one packet */
+    parts[0].iov_base = (caddr_t)line;
+    parts[0].iov_len = strlen(line);
+    parts[1].iov_base = (caddr_t)"\n";
+    parts[1].iov_len = 1;
+    if (writev(server, parts, 2) < 0) disconnect();
 }
 
 static void say(const char *format, ...)
