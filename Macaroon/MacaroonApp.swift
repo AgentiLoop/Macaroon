@@ -127,7 +127,8 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     var modelURL: URL { root.appendingPathComponent("HardwareModel") }
     var machineIDURL: URL { root.appendingPathComponent("MachineIdentifier") }
     var macURL: URL { root.appendingPathComponent("MACAddress") }
-    var ipswURL: URL { root.appendingPathComponent("Restore.ipsw") }
+    /// Named after the chosen IPSW, so picking another macOS version downloads it instead of reusing the last one.
+    var ipswURL: URL { root.appendingPathComponent(selected?.url.lastPathComponent ?? "Restore.ipsw") }
     var nvramURL: URL { root.appendingPathComponent("NVRAM") }
     var isoPathURL: URL { root.appendingPathComponent("ISOPath") }
     var sharedURL: URL { base.appendingPathComponent("VM/Shared") }
@@ -193,20 +194,40 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
 
 
 
-    // MARK: Apple IPSW catalog
+    // MARK: IPSW catalog (Apple's current release + every older Virtual Mac IPSW, macOS 12 and later, from ipsw.me)
+
+    /// Apple's catalog only lists the newest release; ipsw.me lists every VirtualMac2,1 restore image on Apple's CDN.
+    /// VMs don't need a signed IPSW, so any of them installs.
+    static let archiveURL = URL(string: "https://api.ipsw.me/v4/device/VirtualMac2,1?type=ipsw")!
 
     func loadCatalog() async {
+        var found: [String: RestoreImage] = [:]
+        var failure: Error?
         do {
             let (data, _) = try await URLSession.shared.data(from: Self.catalogURL)
             let plist = try PropertyListSerialization.propertyList(from: data, format: nil)
-            var found: [String: RestoreImage] = [:]
             Self.collectVirtualMacImages(plist, insideVirtualMac: false, into: &found)
-            images = found.values.sorted { $0.version.compare($1.version, options: .numeric) == .orderedDescending }
-            pickIPSW()
-            if guest == .macOS { status = isInstalled ? "\(machineName) installed. Press Start." : "Choose a macOS IPSW from Apple, then Download & Install." }
-        } catch {
-            status = "Could not load Apple's IPSW list: \(error.localizedDescription)"
+        } catch { failure = error }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: Self.archiveURL)
+            let firmwares = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["firmwares"] as? [[String: Any]] ?? []
+            for firmware in firmwares {
+                guard let urlString = firmware["url"] as? String, let url = URL(string: urlString),
+                      let version = firmware["version"] as? String, let build = firmware["buildid"] as? String,
+                      version.compare("12", options: .numeric) != .orderedAscending else { continue }
+                found[urlString] = found[urlString] ?? RestoreImage(version: version, build: build, url: url)
+            }
+        } catch { failure = failure ?? error }
+        guard !found.isEmpty else {
+            status = "Could not load the IPSW list: \(failure?.localizedDescription ?? "no images")"
+            return
         }
+        images = found.values.sorted {
+            $0.version != $1.version ? $0.version.compare($1.version, options: .numeric) == .orderedDescending
+                : $0.build.compare($1.build, options: .numeric) == .orderedDescending
+        }
+        pickIPSW()
+        if guest == .macOS { status = isInstalled ? "\(machineName) installed. Press Start." : "Choose a macOS IPSW from Apple, then Download & Install." }
     }
 
     private static func collectVirtualMacImages(_ node: Any, insideVirtualMac: Bool, into found: inout [String: RestoreImage]) {

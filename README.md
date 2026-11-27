@@ -10,7 +10,7 @@ Version 1.4.
 
 1. Open `Macaroon.xcodeproj` and run.
 2. Pick a guest: **macOS**, **Linux** or **Windows ARM**.
-3. For macOS, choose a restore image from the list. The list comes from Apple's IPSW catalog (`mesu.apple.com`) and is filtered to `VirtualMac2,1` images.
+3. For macOS, choose a restore image from the list. The list comes from Apple's IPSW catalog (`mesu.apple.com`) and is filtered to `VirtualMac2,1` images; older releases back to macOS 12 come from ipsw.me (`api.ipsw.me`), and each one downloads to its own file in the VM folder.
 4. Click **Download & Install**. This downloads the IPSW (about 17 GB) and installs macOS onto a 64 GB sparse disk.
 5. Click **Start**, then finish macOS Setup Assistant inside the VM.
 6. Drag any `.app` onto the window. It is copied to the shared folder, which macOS mounts inside the VM at `/Volumes/My Shared Files`.
