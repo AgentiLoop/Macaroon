@@ -134,6 +134,18 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     var modelURL: URL { root.appendingPathComponent("HardwareModel") }
     var machineIDURL: URL { root.appendingPathComponent("MachineIdentifier") }
     var macURL: URL { root.appendingPathComponent("MACAddress") }
+    var osVersionURL: URL { root.appendingPathComponent("OSVersion") }
+    /// The Mac guest's major macOS version: from `OSVersion` (written at install), else from the IPSW kept in the
+    /// VM folder (`UniversalMac_12.6.1_21G217_Restore.ipsw`) for VMs installed before that file existed.
+    var guestMajorVersion: Int? {
+        if let saved = try? String(contentsOf: osVersionURL, encoding: .utf8), let major = Int(saved.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            return major
+        }
+        let ipsws = ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []).filter { $0.hasSuffix(".ipsw") }
+        return ipsws.compactMap { name in
+            name.split(separator: "_").dropFirst().first.flatMap { Int($0.split(separator: ".").first ?? "") }
+        }.max()
+    }
     /// Named after the chosen IPSW, so picking another macOS version downloads it instead of reusing the last one.
     var ipswURL: URL { root.appendingPathComponent(selected?.url.lastPathComponent ?? "Restore.ipsw") }
     var nvramURL: URL { root.appendingPathComponent("NVRAM") }
@@ -316,6 +328,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         platform.machineIdentifier = VZMacMachineIdentifier()
         platform.auxiliaryStorage = try VZMacAuxiliaryStorage(creatingStorageAt: auxURL, hardwareModel: requirements.hardwareModel, options: [.allowOverwrite])
         try requirements.hardwareModel.dataRepresentation.write(to: modelURL)
+        try String(restoreImage.operatingSystemVersion.majorVersion).write(to: osVersionURL, atomically: true, encoding: .utf8)
 
         if !FileManager.default.fileExists(atPath: diskURL.path) {
             FileManager.default.createFile(atPath: diskURL.path, contents: nil)
@@ -686,7 +699,17 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         config.memorySize = memory
 
         let graphics = VZMacGraphicsDeviceConfiguration()
-        graphics.displays = [VZMacGraphicsDisplayConfiguration(widthInPixels: 1920, heightInPixels: 1200, pixelsPerInch: 80)]
+        if let major = guestMajorVersion, major < 14, let screen = NSScreen.main {
+            // macOS 12/13 guests ignore display reconfiguration (it needs macOS 14 in the guest), so they keep their
+            // boot size. Boot them at the screen's pixel size, less the toolbar and status bar, at Retina density
+            // so the guest picks a sharp HiDPI mode by itself.
+            let scale = screen.backingScaleFactor
+            let width = Int(screen.visibleFrame.width * scale) / 8 * 8
+            let height = Int((screen.visibleFrame.height - 100) * scale) / 8 * 8
+            graphics.displays = [VZMacGraphicsDisplayConfiguration(widthInPixels: width, heightInPixels: height, pixelsPerInch: scale >= 2 ? 220 : 110)]
+        } else {
+            graphics.displays = [VZMacGraphicsDisplayConfiguration(widthInPixels: 1920, heightInPixels: 1200, pixelsPerInch: 80)]
+        }
         config.graphicsDevices = [graphics]
 
         config.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: diskURL, readOnly: false))]
