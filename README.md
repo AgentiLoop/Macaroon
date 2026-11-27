@@ -1,6 +1,6 @@
 # Macaroon
 
-A minimal virtual machine app for Apple silicon, built on Apple's Virtualization framework. Runs macOS, Linux, Windows 11 ARM and MacCube (macOS with a NeXTSTEP look).
+A minimal virtual machine app for Apple silicon, built on Apple's Virtualization framework. Runs macOS, Linux and Windows 11 ARM.
 
 **Internal project — not available to the public.** Builds are for the team only; don't distribute them.
 
@@ -9,17 +9,19 @@ Version 1.4.
 ## Use
 
 1. Open `Macaroon.xcodeproj` and run.
-2. Pick a guest: **macOS**, **Linux**, **Windows ARM** or **MacCube**.
-3. For macOS and MacCube, choose a restore image from the list. The list comes from Apple's IPSW catalog (`mesu.apple.com`) and is filtered to `VirtualMac2,1` images. MacCube is pinned to macOS 27.2.1.
+2. Pick a guest: **macOS**, **Linux** or **Windows ARM**.
+3. For macOS, choose a restore image from the list. The list comes from Apple's IPSW catalog (`mesu.apple.com`) and is filtered to `VirtualMac2,1` images.
 4. Click **Download & Install**. This downloads the IPSW (about 17 GB) and installs macOS onto a 64 GB sparse disk.
 5. Click **Start**, then finish macOS Setup Assistant inside the VM.
 6. Drag any `.app` onto the window. It is copied to the shared folder, which macOS mounts inside the VM at `/Volumes/My Shared Files`.
 
-VM files are stored in `~/Library/Application Support/Macaroon/<guest>` (`VM`, `Linux`, `Windows`, `MacCube`).
+VM files are stored in `~/Library/Application Support/Macaroon/<guest>` (`VM`, `Linux`, `Windows`).
+
+**More than one VM per guest:** the VM menu next to the guest picks which VM of that guest you use. The **+** menu makes a **New VM…** (empty, install it as usual) or a **Copy** of the current VM (an APFS clone of its disk, so it is instant and takes no extra space at first; it gets its own MAC address and snapshots). Each one gets a name you choose and lives in `<guest> 2`, `<guest> 3`, … next to the first.
 
 **Sound:** every guest gets a virtio sound device: the Mac's speakers for output and its microphone for input (macOS asks for microphone permission the first time a guest records).
 
-**Snapshots** (toolbar menu): Take Snapshot clones `Disk.img` and `AuxiliaryStorage` into `<guest>/Snapshots/<date>/` using APFS copy-on-write, so it is near-instant and uses no extra space at first. If the VM is running, it is paused and its memory/device state is saved too, so restoring resumes exactly where it left off. Restore first saves a "Before Restore" snapshot, so you can always go back.
+**Snapshots** (toolbar menu): Take Snapshot… asks for a name, then clones `Disk.img` and `AuxiliaryStorage` into `<guest>/Snapshots/<date> <name>/` using APFS copy-on-write, so it is near-instant and uses no extra space at first. If the VM is running, it is paused and its memory/device state is saved too, so restoring resumes exactly where it left off. Each snapshot can be renamed (Rename…). Restore first saves a "Before Restore" snapshot, so you can always go back.
 
 **Start in Recovery** (macOS guests): boots the VM into macOS Recovery, e.g. to run `csrutil disable`.
 
@@ -27,17 +29,9 @@ VM files are stored in `~/Library/Application Support/Macaroon/<guest>` (`VM`, `
 
 **Linux:** GPU OpenGL through VirGL (`Tools/VirGL`); in Ubuntu run `sudo sh "/mnt/Set Up 3D.sh"` once, then `macaroon-gl <app>`.
 
-## MacCube
+## Credits
 
-A macOS VM dressed as NeXTSTEP (`Tools/MacCube`). Build the NeXT apps on the Mac with `Tools/MacCube/build.sh`; they land in the shared folder. In the VM, double-click `Set Up NeXT Look.command` in `/Volumes/My Shared Files`, which installs them into `~/Applications` and sets up the look:
-
-- **NeXT Workspace:** NeXTSTEP's tile Dock on the right (the colour NeXT logo on top, Recycler at the bottom), the floating vertical main menu with tear-off menus, and the File Viewer (shelf, icon path, column browser). Needs Accessibility access to show other apps' menus.
-- **NeXT Browser**, **NeXT Edit** (plain text and RTF), **NeXT Terminal** (VT100/xterm, colours or NeXT greys), **NeXT Calculator** and **NeXT Apps** (the Apps browser). They replace Safari, TextEdit, Terminal, Calculator and Apps in the Dock.
-- The macOS Dock sits at the bottom, auto-hidden.
-
-Experimental, VM only (`Tools/MacCube/SIP-OFF-PLAN.md`): **NeXTSkin**, an Ammonia tweak that puts NeXT title bars, resize bars and scrollers on Apple's TextEdit. It needs SIP off in the VM (Start in Recovery → `csrutil disable`).
-
-`Tools/NeXTSTEP/setup-previous.sh` builds the Previous emulator and installs real NeXTSTEP 3.3 from install media you supply.
+- **Greg Galloway** — the Windows 11 patch for accelerated video.
 
 ## Building
 
