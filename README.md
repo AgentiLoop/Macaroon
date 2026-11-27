@@ -29,6 +29,12 @@ VM files are stored in `~/Library/Application Support/Macaroon/<guest>` (`VM`, `
 
 **Linux:** GPU OpenGL through VirGL (`Tools/VirGL`); in Ubuntu run `sudo sh "/mnt/Set Up 3D.sh"` once, then `macaroon-gl <app>`.
 
+## Inspiration
+
+Macaroon was inspired by [Hobo](https://hobo.gsquared.app) ([github.com/hobo-vm/hobo](https://github.com/hobo-vm/hobo)), Greg Galloway's command-line tool for ephemeral macOS, Linux and Windows VMs on Apple silicon. Thank you, Greg, for the inspiration and for your friendship.
+
+Macaroon is an independent project and is not affiliated with or endorsed by Hobo. Apart from Greg's Windows 11 display-driver patch credited below, Macaroon contains no code from Hobo. Hobo is licensed separately under the Apache License 2.0; see its repository for details.
+
 ## Credits
 
 - **Greg Galloway** — the Windows 11 patch for accelerated video: [virtio-win/kvm-guest-drivers-windows PR #1717](https://github.com/virtio-win/kvm-guest-drivers-windows/pull/1717), "viogpu: move the scanout to the new framebuffer before releasing the old one".
