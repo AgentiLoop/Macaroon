@@ -29,7 +29,7 @@ VM files are stored in `~/Library/Application Support/Macaroon/<guest>` (`VM`, `
 
 ## Inspiration
 
-Macaroon was inspired by [Hobo](https://hobo.gsquared.app) ([github.com/hobo-vm/hobo](https://github.com/hobo-vm/hobo)), Greg Galloway's command-line tool for ephemeral macOS, Linux and Windows VMs on Apple silicon. Thank you, Greg, for the inspiration.
+Macaroon was inspired by [Hobo](https://hobo.gsquared.app) ([github.com/hobo-vm/hobo](https://github.com/hobo-vm/hobo)), Greg Galloway's command-line tool for ephemeral macOS, Linux and Windows VMs on Apple silicon.
 
 Macaroon is an independent project and is not affiliated with or endorsed by Hobo. Apart from Greg's Windows 11 ARM display-driver patch credited below, Macaroon contains no code from Hobo. Hobo is licensed separately under the Apache License 2.0; see its repository for details.
 
