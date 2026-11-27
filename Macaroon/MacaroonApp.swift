@@ -154,6 +154,9 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     var snapshotsURL: URL { root.appendingPathComponent("Snapshots") }
     @Published var snapshots: [Snapshot] = []
     var isInstalled: Bool { FileManager.default.fileExists(atPath: machineIDURL.path) }
+    /// Heights (points) of the window's content and of its VM area, kept up to date by ContentView.
+    var windowContentHeight: CGFloat = 0
+    var vmAreaHeight: CGFloat = 0
 
     /// The installer ISO attached as a USB drive, if any.
     var installerISO: URL? {
@@ -701,11 +704,13 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         let graphics = VZMacGraphicsDeviceConfiguration()
         if let major = guestMajorVersion, major < 14, let screen = NSScreen.main {
             // macOS 12/13 guests ignore display reconfiguration (it needs macOS 14 in the guest), so they keep their
-            // boot size. Boot them at the screen's full pixel size (fills full screen exactly; windowed, the window is
-            // reshaped to that aspect) at Retina density so the guest picks a sharp HiDPI mode by itself.
+            // boot size. Boot them at the size the VM area has in full screen: the screen less the toolbar and status
+            // bar, measured from the window (windowed, the window is reshaped to that aspect), at Retina density so
+            // the guest picks a sharp HiDPI mode by itself.
             let scale = screen.backingScaleFactor
+            let chrome = max(0, windowContentHeight - vmAreaHeight)
             let width = Int(screen.frame.width * scale) / 8 * 8
-            let height = Int(screen.frame.height * scale) / 8 * 8
+            let height = Int((screen.frame.height - chrome) * scale) / 8 * 8
             graphics.displays = [VZMacGraphicsDisplayConfiguration(widthInPixels: width, heightInPixels: height, pixelsPerInch: scale >= 2 ? 220 : 110)]
         } else {
             graphics.displays = [VZMacGraphicsDisplayConfiguration(widthInPixels: 1920, heightInPixels: 1200, pixelsPerInch: 80)]
@@ -1283,6 +1288,7 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { vm.vmAreaHeight = $0 }
             .background(Color.black.opacity(0.85))
             .foregroundStyle(.white)
             .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
@@ -1302,6 +1308,8 @@ struct ContentView: View {
             }
             .padding(10)
         }
+        // Window content height; less the VM area's height, that's the toolbar and status bar (see vmAreaHeight)
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { vm.windowContentHeight = $0 }
     }
 
     /// Asks for a cmd.exe command line, runs it in Windows, shows its output.
