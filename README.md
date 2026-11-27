@@ -9,13 +9,13 @@ Version 1.4.
 ## Use
 
 1. Open `Macaroon.xcodeproj` and run.
-2. Pick a guest: **macOS**, **Linux** or **Windows ARM**.
+2. Pick a guest: **Mac** (macOS 26 and later), **BigMac** (macOS 12 up to 15), **Linux** or **Windows ARM**.
 3. For macOS, choose a restore image from the list. The list comes from Apple's IPSW catalog (`mesu.apple.com`) and is filtered to `VirtualMac2,1` images; older releases back to macOS 12 come from ipsw.me (`api.ipsw.me`), and each one downloads to its own file in the VM folder.
 4. Click **Download & Install**. This downloads the IPSW (about 17 GB) and installs macOS onto a 64 GB sparse disk.
 5. Click **Start**, then finish macOS Setup Assistant inside the VM.
 6. Drag any `.app` onto the window. It is copied to the shared folder, which macOS mounts inside the VM at `/Volumes/My Shared Files`.
 
-VM files are stored in `~/Library/Application Support/Macaroon/<guest>` (`VM`, `Linux`, `Windows`).
+VM files are stored in `~/Library/Application Support/Macaroon/<guest>` (`VM`, `BigMac`, `Linux`, `Windows`).
 
 **More than one VM per guest:** the VM menu next to the guest picks which VM of that guest you use. The **+** menu makes a **New VM…** (empty, install it as usual) or a **Copy** of the current VM (an APFS clone of its disk, so it is instant and takes no extra space at first; it gets its own MAC address and snapshots). Each one gets a name you choose and lives in `<guest> 2`, `<guest> 3`, … next to the first.
 

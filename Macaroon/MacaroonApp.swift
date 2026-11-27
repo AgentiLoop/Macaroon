@@ -50,12 +50,14 @@ struct VMEntry: Identifiable, Hashable {
 }
 
 /// macOS guests use Apple's Mac platform; Linux and Windows ARM boot from an ISO through the generic EFI platform.
+/// BigMac is a Mac guest for the releases older than macOS 26; the Mac guest has macOS 26 and later.
 enum GuestOS: String, CaseIterable, Identifiable {
-    case macOS, linux, windows
+    case macOS, bigMac, linux, windows
     var id: String { rawValue }
     var title: String {
         switch self {
         case .macOS: "macOS"
+        case .bigMac: "BigMac"
         case .linux: "Linux"
         case .windows: "Windows ARM"
         }
@@ -63,12 +65,13 @@ enum GuestOS: String, CaseIterable, Identifiable {
     var folder: String {
         switch self {
         case .macOS: "VM"
+        case .bigMac: "BigMac"
         case .linux: "Linux"
         case .windows: "Windows"
         }
     }
     /// Runs on Apple's Mac platform (IPSW install, VZMacOSBootLoader).
-    var isMac: Bool { self == .macOS }
+    var isMac: Bool { self == .macOS || self == .bigMac }
 }
 
 @MainActor
@@ -97,7 +100,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         didSet {
             UserDefaults.standard.set(machineFolder, forKey: "machine.\(guest.rawValue)")
             loadSnapshots()
-            status = isInstalled ? "\(machineName) installed. Press Start." : guest == .macOS
+            status = isInstalled ? "\(machineName) installed. Press Start." : guest.isMac
                 ? "Choose a macOS IPSW from Apple, then Download & Install."
                 : "Choose an ARM64 \(guest.title) installer ISO."
         }
@@ -107,9 +110,13 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         let saved = UserDefaults.standard.string(forKey: "machine.\(guest.rawValue)") ?? ""
         return machines.contains { $0.folder == saved } ? saved : guest.folder
     }
+    /// The IPSW menu: macOS 26 and later for Mac, older releases for BigMac.
+    var ipswChoices: [RestoreImage] {
+        images.filter { ($0.version.compare("26", options: .numeric) == .orderedAscending) == (guest == .bigMac) }
+    }
     private func pickIPSW() {
-        if let selected, images.contains(selected) { return }
-        selected = images.first
+        if let selected, ipswChoices.contains(selected) { return }
+        selected = ipswChoices.first
     }
     @Published var isos: [InstallerISO] = []
     @Published var selectedISO: InstallerISO? {
@@ -227,7 +234,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
                 : $0.build.compare($1.build, options: .numeric) == .orderedDescending
         }
         pickIPSW()
-        if guest == .macOS { status = isInstalled ? "\(machineName) installed. Press Start." : "Choose a macOS IPSW from Apple, then Download & Install." }
+        if guest.isMac { status = isInstalled ? "\(machineName) installed. Press Start." : "Choose a macOS IPSW from Apple, then Download & Install." }
     }
 
     private static func collectVirtualMacImages(_ node: Any, insideVirtualMac: Bool, into found: inout [String: RestoreImage]) {
@@ -756,7 +763,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             try await vm.start()
             running = true
             switch guest {
-            case .macOS: status = "Running. Drag an app onto the window; in the VM open /Volumes/My Shared Files."
+            case .macOS, .bigMac: status = "Running. Drag an app onto the window; in the VM open /Volumes/My Shared Files."
             case .linux:
                 status = installerISO != nil ? "Booting the installer ISO. After installing, Stop and Eject ISO." : "Running. Shared folder: mount -t virtiofs com.apple.virtio-fs.automount /mnt"
                 linuxGL = LinuxGL(machine: vm)
@@ -1163,7 +1170,7 @@ struct ContentView: View {
                 .disabled(vm.busy || vm.running)
                 if vm.guest.isMac {
                     Picker("IPSW", selection: $vm.selected) {
-                        ForEach(vm.images) { Text($0.title).tag(Optional($0)) }
+                        ForEach(vm.ipswChoices) { Text($0.title).tag(Optional($0)) }
                     }
                     .frame(maxWidth: 320)
                     .disabled(vm.busy || vm.running)
