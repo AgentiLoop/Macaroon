@@ -1073,6 +1073,7 @@ struct VMView: NSViewRepresentable {
         context.coordinator.retina = retina
         context.coordinator.resizesGuest = resizesGuest
         context.coordinator.windowsAgent = windowsAgent
+        context.coordinator.fixedDisplay = fixedDisplay
         Coordinator.current = view
         return view
     }
@@ -1096,6 +1097,7 @@ struct VMView: NSViewRepresentable {
         var retina = true
         var resizesGuest = true
         var windowsAgent = false
+        var fixedDisplay = false
         private var display: VZGraphicsDisplay?
         private var resizeObservers: [NSObjectProtocol] = []
         private var pending: DispatchWorkItem?
@@ -1147,6 +1149,9 @@ struct VMView: NSViewRepresentable {
         }
 
         private func fit() {
+            // Fixed-size guests (macOS 12/13): never reshape the window. Its minimum size can't always match the
+            // guest's shape, and each refit triggered another resize, so the window snapped forever.
+            guard !fixedDisplay else { return }
             guard let size = display?.sizeInPixels, size.width > 0, size.height > 0,
                   let view, let window = view.window, !window.inLiveResize,
                   !window.styleMask.contains(.fullScreen) else { return }
