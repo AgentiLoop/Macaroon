@@ -25,7 +25,7 @@ VM files are stored in `~/Library/Application Support/Macaroon/<guest>` (`VM`, `
 
 **Start in Recovery** (macOS guests): boots the VM into macOS Recovery, e.g. to run `csrutil disable`.
 
-**Windows 11 ARM** (needs `brew install wimlib`): pick Windows ARM, then Download & Install (or Install from ISO…). Macaroon repacks the ISO into `Windows/Media.img`, installs unattended through WinPE with the virtio-win drivers, and restarts the VM through Windows' reboots until setup is done (about 10 minutes). Log in as your Mac user name with password `macaroon`. Apple's firmware has no framebuffer for Windows, so a small UEFI driver supplies one (`Tools/WindowsEFI`, rebuild with `make`).
+**Windows 11 ARM** (needs `brew install wimlib`): pick Windows ARM, then Download & Install (or Install from ISO…). Macaroon repacks the ISO into `Windows/Media.img`, installs unattended through WinPE with the virtio-win drivers, and restarts the VM through Windows' reboots until setup is done (about 10 minutes). Log in as your Mac user name with password `macaroon`. Apple's firmware has no framebuffer for Windows, so a small UEFI driver supplies one (`Tools/WindowsEFI`, rebuild with `make`). **Host requirement:** Windows 11 ARM has only been tested on a Mac running macOS 27.2.1 and may need it; older host macOS versions have not been tested.
 
 **Linux:** GPU OpenGL through VirGL (`Tools/VirGL`); in Ubuntu run `sudo sh "/mnt/Set Up 3D.sh"` once, then `macaroon-gl <app>`.
 
