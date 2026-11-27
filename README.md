@@ -31,7 +31,7 @@ VM files are stored in `~/Library/Application Support/Macaroon/<guest>` (`VM`, `
 
 ## Credits
 
-- **Greg Galloway** — the Windows 11 patch for accelerated video.
+- **Greg Galloway** — the Windows 11 patch for accelerated video: [virtio-win/kvm-guest-drivers-windows PR #1717](https://github.com/virtio-win/kvm-guest-drivers-windows/pull/1717), "viogpu: move the scanout to the new framebuffer before releasing the old one".
 
 ## Building
 
