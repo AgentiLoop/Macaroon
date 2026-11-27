@@ -1,0 +1,8 @@
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "macaroon-xcf-ai",
+  "account_id": "de8aa8c61fee13dabcdd934006b20d89",
+  "compatibility_date": "2026-11-25",
+  "routes": [{ "pattern": "macaroon.xcf.ai", "custom_domain": true }],
+  "assets": { "directory": "./public" }
+}
