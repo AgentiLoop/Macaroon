@@ -36,20 +36,28 @@ struct Snapshot: Identifiable, Hashable {
     let url: URL
     var id: URL { url }
     var name: String { url.lastPathComponent }
+    /// Folder names are "<yyyy-MM-dd HH.mm.ss> <label>"
+    var date: String { String(name.prefix(19)) }
     var hasState: Bool { FileManager.default.fileExists(atPath: url.appendingPathComponent("State.vzvmsave").path) }
 }
 
+/// One VM of a guest type. The first lives in the guest's folder (`VM`, `Linux`, `Windows`); more VMs and copies
+/// live in `<folder> 2`, `<folder> 3`, … Each may have its name in a `Name` file.
+struct VMEntry: Identifiable, Hashable {
+    let folder: String
+    let name: String
+    var id: String { folder }
+}
+
 /// macOS guests use Apple's Mac platform; Linux and Windows ARM boot from an ISO through the generic EFI platform.
-/// MacCube is a second macOS VM pinned to macOS 27.2.1, given a NeXTSTEP look by a setup script in the shared folder.
 enum GuestOS: String, CaseIterable, Identifiable {
-    case macOS, linux, windows, macCube
+    case macOS, linux, windows
     var id: String { rawValue }
     var title: String {
         switch self {
         case .macOS: "macOS"
         case .linux: "Linux"
         case .windows: "Windows ARM"
-        case .macCube: "MacCube"
         }
     }
     var folder: String {
@@ -57,11 +65,10 @@ enum GuestOS: String, CaseIterable, Identifiable {
         case .macOS: "VM"
         case .linux: "Linux"
         case .windows: "Windows"
-        case .macCube: "MacCube"
         }
     }
     /// Runs on Apple's Mac platform (IPSW install, VZMacOSBootLoader).
-    var isMac: Bool { self == .macOS || self == .macCube }
+    var isMac: Bool { self == .macOS }
 }
 
 @MainActor
@@ -76,137 +83,33 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     @Published var guest = GuestOS(rawValue: UserDefaults.standard.string(forKey: "guest") ?? "") ?? .macOS {
         didSet {
             UserDefaults.standard.set(guest.rawValue, forKey: "guest")
-            loadSnapshots()
-            status = isInstalled ? "\(guest.title) VM installed. Press Start." : guest == .macOS
-                ? "Choose a macOS IPSW from Apple, then Download & Install."
-                : guest == .macCube ? "Download & Install macOS \(Self.macCubeVersion) for MacCube."
-                : "Choose an ARM64 \(guest.title) installer ISO."
+            loadMachines()
+            machineFolder = savedMachineFolder
             // Show the cached list for the new guest right away; fetch only if it was never loaded
             showISOs()
             if guest == .linux || guest == .windows, isoCache[guest] == nil { Task { await loadISOCatalog(guest) } }
             pickIPSW()
         }
     }
-    /// The IPSW menu: every Virtual Mac IPSW for macOS, only the pinned release for MacCube.
-    static let macCubeVersion = "27.2.1"
-    /// Run once inside MacCube: NeXTSTEP-style Dock on the right edge with big fixed tiles, dark graphite
-    /// appearance, solid NeXT grey desktop, high contrast borders and no transparency. Best effort: settings
-    /// macOS protects (accessibility) are skipped with a note instead of failing.
-    static let nextLookScript = #"""
-    #!/bin/zsh
-    # MacCube: give macOS a NeXTSTEP look. Safe to run again.
-    echo "Setting up the NeXT look…"
-    # The macOS Dock: along the bottom, auto-hidden (point at the bottom edge to show it; Option-Command-D turns
-    # hiding on and off), 64-pt tiles, no magnification. NeXT Workspace's tile Dock stays on the right.
-    defaults write com.apple.dock orientation -string bottom
-    defaults write com.apple.dock tilesize -int 64
-    defaults write com.apple.dock magnification -bool false
-    defaults write com.apple.dock autohide -bool true
-    defaults delete com.apple.dock autohide-delay 2>/dev/null
-    defaults write com.apple.dock show-recents -bool false
-    defaults write com.apple.dock mineffect -string scale
-    # Dark grey, graphite accent and highlight, like NeXTSTEP's monochrome look
-    defaults write -g AppleInterfaceStyle -string Dark
-    defaults write -g AppleAccentColor -int -1
-    defaults write -g AppleHighlightColor -string "0.847059 0.847059 0.862745 Graphite"
-    defaults write -g AppleReduceDesktopTinting -bool true
-    defaults write -g NSTableViewDefaultSizeMode -int 1
-    # Square, bordered, opaque windows (needs Privacy & Security > Full Disk Access for Terminal on some releases)
-    defaults write com.apple.universalaccess reduceTransparency -bool true 2>/dev/null || echo "Skipped: Reduce Transparency (turn it on in System Settings > Accessibility > Display)"
-    defaults write com.apple.universalaccess increaseContrast -bool true 2>/dev/null || echo "Skipped: Increase Contrast (turn it on in System Settings > Accessibility > Display)"
-    # Solid NeXT grey desktop (#555555)
-    wall="$HOME/Pictures/NeXT Grey.png"
-    mkdir -p "$HOME/Pictures"
-    echo "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAD0lEQVR4nGMIxQEYhpYEAOkwP8EcYhReAAAAAElFTkSuQmCC" | base64 -D > "$wall"
-    osascript -e "tell application \"System Events\" to set picture of every desktop to POSIX file \"$wall\"" \
-        || echo "Skipped: desktop picture (allow Terminal to control System Events, then run again)"
-    # Finder as NeXTSTEP's File Viewer: the column browser (NeXT invented it), path shown above and in the title,
-    # every window opening on the home folder, full file names
-    defaults write com.apple.finder FXPreferredViewStyle -string clmv
-    defaults write com.apple.finder ShowPathbar -bool true
-    defaults write com.apple.finder ShowStatusBar -bool true
-    defaults write com.apple.finder _FXShowPosixPathInTitle -bool true
-    defaults write com.apple.finder NewWindowTarget -string PfHm
-    defaults write com.apple.finder NewWindowTargetPath -string "file://$HOME/"
-    defaults write com.apple.finder FXDefaultSearchScope -string SCcf
-    defaults write com.apple.finder FXEnableExtensionChangeWarning -bool false
-    defaults write -g AppleShowAllExtensions -bool true
-    # The Workspace desktop: no icons on it, just the grey background and the Dock
-    defaults write com.apple.finder CreateDesktop -bool false
-    # NeXT had no permanent menu bar across the top; show it only when the pointer reaches the top edge
-    defaults write -g _HIHideMenuBar -bool true
-    # Home folder as a Dock tile, like NeXT's file viewer tile (added once)
-    defaults read com.apple.dock persistent-others 2>/dev/null | grep -q "file://$HOME/\"" || defaults write com.apple.dock persistent-others -array-add \
-        "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>file://$HOME/</string><key>_CFURLStringType</key><integer>15</integer></dict><key>file-label</key><string>Home</string><key>displayas</key><integer>1</integer><key>showas</key><integer>2</integer><key>arrangement</key><integer>1</integer></dict><key>tile-type</key><string>directory-tile</string></dict>"
-    # NeXT Workspace (Tools/MacCube): NeXTSTEP's tile Dock on the right and its vertical main menu at the top
-    # left, started at every login. It replaces the macOS Dock, which is pushed out of the way.
-    src="/Volumes/My Shared Files/NeXT Workspace.app"
-    # Copies an app from the shared folder without quarantine or other attributes, then re-signs it here (ad hoc,
-    # same identifier requirement). A quarantined ad-hoc app is what macOS reports as "damaged".
-    install_app() {
-        # A bundle caught mid-build on the Mac (no Info.plist or executable) would show the circle-slash icon
-        if [ ! -f "$1/Contents/Info.plist" ] || [ -z "$(ls "$1/Contents/MacOS" 2>/dev/null)" ]; then
-            echo "Skipped ${2:t}: incomplete in the Shared Folder (rebuild with Tools/MacCube/build.sh, then run this again)"
-            return
-        fi
-        rm -rf "$2"
-        ditto --noextattr --noqtn "$1" "$2"
-        xattr -cr "$2"
-        codesign -s - -f -r="designated => identifier \"$3\"" "$2" >/dev/null 2>&1 || echo "Could not sign $2"
-        # Fresh icon in Finder and the Dock (they cache icons by path)
-        touch "$2"
-        /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$2" 2>/dev/null
-        echo "Installed ${2:t} (build $(defaults read "$2/Contents/Info" CFBundleVersion 2>/dev/null))"
-        [ -f "$2/Contents/Resources/Assets.car" ] || echo "  WARNING: ${2:t} has no icon (no Assets.car in $1); rebuild with Tools/MacCube/build.sh"
+    /// The guest's VMs, and the folder (under `base`) of the one in use.
+    @Published var machines: [VMEntry] = []
+    @Published var machineFolder = "" {
+        didSet {
+            UserDefaults.standard.set(machineFolder, forKey: "machine.\(guest.rawValue)")
+            loadSnapshots()
+            status = isInstalled ? "\(machineName) installed. Press Start." : guest == .macOS
+                ? "Choose a macOS IPSW from Apple, then Download & Install."
+                : "Choose an ARM64 \(guest.title) installer ISO."
+        }
     }
-    if [ -d "$src" ]; then
-        mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
-        install_app "$src" "$HOME/Applications/NeXT Workspace.app" com.macaroon.NeXTWorkspace
-        # NeXT apps replace their macOS counterparts in the Dock (also in a Dock saved by an earlier run)
-        for pair in "NeXT Calculator:/System/Applications/Calculator.app" "NeXT Browser:/Applications/Safari.app" "NeXT Edit:/System/Applications/TextEdit.app" "NeXT Terminal:/System/Applications/Utilities/Terminal.app" "NeXT Apps:/System/Applications/Apps.app"; do
-            name=${pair%%:*} old=${pair#*:}
-            [ -d "/Volumes/My Shared Files/$name.app" ] || continue
-            install_app "/Volumes/My Shared Files/$name.app" "$HOME/Applications/$name.app" "com.macaroon.${name// /}"
-            dock=$(defaults read com.macaroon.NeXTWorkspace DockApps 2>/dev/null | grep -o '"[^"]*"' | tr -d '"')
-            if [ -n "$dock" ]; then
-                defaults write com.macaroon.NeXTWorkspace DockApps -array ${(f)"$(print -r -- "$dock" | sed "s|^$old$|$HOME/Applications/$name.app|")"}
-            fi
-        done
-        # NeXT Apps belongs in the NeXT Dock even when a saved Dock never had Apple's Apps: add it after the Finder
-        apps="$HOME/Applications/NeXT Apps.app"
-        dock=$(defaults read com.macaroon.NeXTWorkspace DockApps 2>/dev/null | grep -o '"[^"]*"' | tr -d '"')
-        if [ -d "$apps" ] && [ -n "$dock" ] && ! print -r -- "$dock" | grep -qxF "$apps"; then
-            tiles=(${(f)dock})
-            defaults write com.macaroon.NeXTWorkspace DockApps -array "$tiles[1]" "$apps" "${(@)tiles[2,-1]}"
-        fi
-        agent="$HOME/Library/LaunchAgents/com.macaroon.NeXTWorkspace.plist"
-        cat > "$agent" <<EOF
-    <?xml version="1.0" encoding="UTF-8"?>
-    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-    <plist version="1.0"><dict>
-        <key>Label</key><string>com.macaroon.NeXTWorkspace</string>
-        <key>ProgramArguments</key><array><string>$HOME/Applications/NeXT Workspace.app/Contents/MacOS/NeXTWorkspace</string></array>
-        <key>RunAtLoad</key><true/>
-        <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
-    </dict></plist>
-    EOF
-        launchctl bootout gui/$(id -u) "$agent" 2>/dev/null
-        # An older build's Accessibility entry no longer matches this signature; clear it so the switch is real
-        tccutil reset Accessibility com.macaroon.NeXTWorkspace 2>/dev/null
-        launchctl bootstrap gui/$(id -u) "$agent"
-        echo "NeXT Workspace installed. Allow it in System Settings > Privacy & Security > Accessibility so its menu can show each app's menus."
-    else
-        echo "Skipped: NeXT Workspace.app is not in the Shared Folder (build it on the Mac with Tools/MacCube/build.sh)"
-    fi
-    # Icon Services caches app icons by bundle id and version; restart it so replaced apps show their new icons
-    killall iconservicesagent 2>/dev/null
-    killall Dock SystemUIServer Finder 2>/dev/null
-    echo "Done. Log out and back in for the dark appearance to reach every app."
-    """#
-    var ipswChoices: [RestoreImage] { guest == .macCube ? images.filter { $0.version == Self.macCubeVersion } : images }
+    var machineName: String { machines.first { $0.folder == machineFolder }?.name ?? guest.title }
+    private var savedMachineFolder: String {
+        let saved = UserDefaults.standard.string(forKey: "machine.\(guest.rawValue)") ?? ""
+        return machines.contains { $0.folder == saved } ? saved : guest.folder
+    }
     private func pickIPSW() {
-        if let selected, ipswChoices.contains(selected) { return }
-        selected = ipswChoices.first
+        if let selected, images.contains(selected) { return }
+        selected = images.first
     }
     @Published var isos: [InstallerISO] = []
     @Published var selectedISO: InstallerISO? {
@@ -218,7 +121,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
 
     static let catalogURL = URL(string: "https://mesu.apple.com/assets/macos/com_apple_macOSIPSW/com_apple_macOSIPSW.xml")!
     let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Macaroon")
-    var root: URL { base.appendingPathComponent(guest.folder) }
+    var root: URL { base.appendingPathComponent(machineFolder) }
     var diskURL: URL { root.appendingPathComponent("Disk.img") }
     var auxURL: URL { root.appendingPathComponent("AuxiliaryStorage") }
     var modelURL: URL { root.appendingPathComponent("HardwareModel") }
@@ -244,8 +147,50 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
     override init() {
         super.init()
         try? FileManager.default.createDirectory(at: sharedURL, withIntermediateDirectories: true)
-        loadSnapshots()
+        loadMachines()
+        machineFolder = savedMachineFolder
     }
+
+    // MARK: More VMs per guest, and copies of a VM
+
+    func loadMachines() {
+        let prefix = guest.folder + " "
+        let extra = ((try? FileManager.default.contentsOfDirectory(atPath: base.path)) ?? [])
+            .filter { $0.hasPrefix(prefix) && Int($0.dropFirst(prefix.count)) != nil }
+            .sorted { $0.compare($1, options: .numeric) == .orderedAscending }
+        machines = ([guest.folder] + extra).map { folder in
+            let saved = (try? String(contentsOf: base.appendingPathComponent(folder).appendingPathComponent("Name"), encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return VMEntry(folder: folder, name: saved.flatMap { $0.isEmpty ? nil : $0 } ?? (folder == guest.folder ? guest.title : folder))
+        }
+    }
+
+    /// The VM's own files a copy takes (APFS clones). Not its snapshots, installer media or MAC address (a copy gets a new one).
+    private let machineFiles = ["Disk.img", "AuxiliaryStorage", "HardwareModel", "MachineIdentifier", "NVRAM", "ISOPath"]
+
+    /// A new, empty VM of the current guest, or (`copy`) a copy of the current VM, in the next free `<folder> N`.
+    func newMachine(named name: String, copy: Bool) {
+        let source = root, sourceName = machineName
+        var number = 2
+        while FileManager.default.fileExists(atPath: base.appendingPathComponent("\(guest.folder) \(number)").path) { number += 1 }
+        let folder = "\(guest.folder) \(number)"
+        let target = base.appendingPathComponent(folder)
+        do {
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+            if copy {
+                try clone(machineFiles.filter { FileManager.default.fileExists(atPath: source.appendingPathComponent($0).path) }, from: source, to: target)
+            }
+            try name.write(to: target.appendingPathComponent("Name"), atomically: true, encoding: .utf8)
+        } catch {
+            try? FileManager.default.removeItem(at: target)
+            status = "\(copy ? "Copy" : "New VM") failed: \(error.localizedDescription)"
+            return
+        }
+        loadMachines()
+        machineFolder = folder
+        if copy { status = "Copied \(sourceName) to \(name). Press Start." }
+    }
+
 
 
     // MARK: Apple IPSW catalog
@@ -258,7 +203,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             Self.collectVirtualMacImages(plist, insideVirtualMac: false, into: &found)
             images = found.values.sorted { $0.version.compare($1.version, options: .numeric) == .orderedDescending }
             pickIPSW()
-            if guest == .macOS { status = isInstalled ? "VM installed. Press Start." : "Choose a macOS IPSW from Apple, then Download & Install." }
+            if guest == .macOS { status = isInstalled ? "\(machineName) installed. Press Start." : "Choose a macOS IPSW from Apple, then Download & Install." }
         } catch {
             status = "Could not load Apple's IPSW list: \(error.localizedDescription)"
         }
@@ -798,11 +743,6 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
                     try? LinuxGL.guestSetupScript.write(to: sharedURL.appendingPathComponent("Set Up 3D.sh"), atomically: true, encoding: .utf8)
                     status += ". GPU OpenGL: run sudo sh \"/mnt/Set Up 3D.sh\" once, then macaroon-gl <app>"
                 }
-            case .macCube:
-                let script = sharedURL.appendingPathComponent("Set Up NeXT Look.command")
-                try? Self.nextLookScript.write(to: script, atomically: true, encoding: .utf8)
-                try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
-                status = "Running MacCube. For the NeXT look, double-click Set Up NeXT Look.command in /Volumes/My Shared Files."
             case .windows:
                 status = setupPhase == "media" ? "Installing Windows from Media.img (WinPE, unattended). The VM powers off when done." : "Running."
                 if setupPhase == nil {
@@ -913,7 +853,7 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         defer { busy = false; loadSnapshots() }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
-        let folder = snapshotsURL.appendingPathComponent("\(formatter.string(from: Date())) \(label)")
+        let folder = snapshotsURL.appendingPathComponent("\(formatter.string(from: Date())) \(Self.fileSafe(label, or: "Snapshot"))")
         var note = ""
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -984,6 +924,26 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
             status = "Delete failed: \(error.localizedDescription)"
         }
         loadSnapshots()
+    }
+
+    /// Keeps the snapshot's date, gives it a new name.
+    func rename(_ snapshot: Snapshot, to label: String) {
+        let target = snapshotsURL.appendingPathComponent("\(snapshot.date) \(Self.fileSafe(label, or: "Snapshot"))")
+        guard target != snapshot.url else { return }
+        do {
+            try FileManager.default.moveItem(at: snapshot.url, to: target)
+            status = "Renamed snapshot to \(target.lastPathComponent)."
+        } catch {
+            status = "Rename failed: \(error.localizedDescription)"
+        }
+        loadSnapshots()
+    }
+
+    /// A name usable in a folder name: no slashes or colons, trimmed, never empty.
+    static func fileSafe(_ name: String, or fallback: String) -> String {
+        let cleaned = name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? fallback : cleaned
     }
 
     // MARK: Drag an app in
@@ -1159,9 +1119,30 @@ struct ContentView: View {
                 .pickerStyle(.menu)
                 .fixedSize()
                 .disabled(vm.busy || vm.running)
+                Picker("VM", selection: $vm.machineFolder) {
+                    ForEach(vm.machines) { Text($0.name).tag($0.folder) }
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+                .disabled(vm.busy || vm.running)
+                Menu {
+                    Button("New \(vm.guest.title) VM…") {
+                        if let name = askName("New \(vm.guest.title) VM", "A name for the new VM", "\(vm.guest.title) \(vm.machines.count + 1)") {
+                            vm.newMachine(named: name, copy: false)
+                        }
+                    }
+                    Button("Copy \(vm.machineName)…") {
+                        if let name = askName("Copy \(vm.machineName)", "A name for the copy (an APFS clone of its disk)", "\(vm.machineName) Copy") {
+                            vm.newMachine(named: name, copy: true)
+                        }
+                    }
+                    .disabled(!vm.isInstalled)
+                } label: { Image(systemName: "plus") }
+                .fixedSize()
+                .disabled(vm.busy || vm.running)
                 if vm.guest.isMac {
                     Picker("IPSW", selection: $vm.selected) {
-                        ForEach(vm.ipswChoices) { Text($0.title).tag(Optional($0)) }
+                        ForEach(vm.images) { Text($0.title).tag(Optional($0)) }
                     }
                     .frame(maxWidth: 320)
                     .disabled(vm.busy || vm.running)
@@ -1193,11 +1174,20 @@ struct ContentView: View {
                 Button("Stop") { Task { await vm.stop() } }
                     .disabled(!vm.running)
                 Menu("Snapshots") {
-                    Button("Take Snapshot") { Task { await vm.takeSnapshot() } }
+                    Button("Take Snapshot…") {
+                        if let name = askName("Take Snapshot", "A name for the snapshot of \(vm.machineName)", "Snapshot") {
+                            Task { await vm.takeSnapshot(label: name) }
+                        }
+                    }
                     if !vm.snapshots.isEmpty { Divider() }
                     ForEach(vm.snapshots) { snapshot in
                         Menu(snapshot.hasState ? "\(snapshot.name) (running state)" : snapshot.name) {
                             Button("Restore") { Task { await vm.restore(snapshot) } }
+                            Button("Rename…") {
+                                if let name = askName("Rename Snapshot", "A new name for \(snapshot.name)", String(snapshot.name.dropFirst(20))) {
+                                    vm.rename(snapshot, to: name)
+                                }
+                            }
                             Button("Delete", role: .destructive) { vm.delete(snapshot) }
                         }
                     }
@@ -1289,6 +1279,22 @@ struct ContentView: View {
             result.accessoryView = scroll
             result.runModal()
         }
+    }
+
+    /// Asks for a name; nil when cancelled or left empty.
+    private func askName(_ title: String, _ message: String, _ suggested: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.stringValue = suggested
+        alert.accessoryView = field
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? nil : name
     }
 
     private func chooseISO() {
