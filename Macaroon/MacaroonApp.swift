@@ -701,11 +701,11 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         let graphics = VZMacGraphicsDeviceConfiguration()
         if let major = guestMajorVersion, major < 14, let screen = NSScreen.main {
             // macOS 12/13 guests ignore display reconfiguration (it needs macOS 14 in the guest), so they keep their
-            // boot size. Boot them at the screen's pixel size, less the toolbar and status bar, at Retina density
-            // so the guest picks a sharp HiDPI mode by itself.
+            // boot size. Boot them at the screen's full pixel size (fills full screen exactly; windowed, the window is
+            // reshaped to that aspect) at Retina density so the guest picks a sharp HiDPI mode by itself.
             let scale = screen.backingScaleFactor
-            let width = Int(screen.visibleFrame.width * scale) / 8 * 8
-            let height = Int((screen.visibleFrame.height - 100) * scale) / 8 * 8
+            let width = Int(screen.frame.width * scale) / 8 * 8
+            let height = Int(screen.frame.height * scale) / 8 * 8
             graphics.displays = [VZMacGraphicsDisplayConfiguration(widthInPixels: width, heightInPixels: height, pixelsPerInch: scale >= 2 ? 220 : 110)]
         } else {
             graphics.displays = [VZMacGraphicsDisplayConfiguration(widthInPixels: 1920, heightInPixels: 1200, pixelsPerInch: 80)]
@@ -1057,11 +1057,13 @@ struct VMView: NSViewRepresentable {
     var resizesGuest = true
     /// Windows: after resizing the display, ask the guest agent to switch the desktop to the new mode
     var windowsAgent = false
+    /// macOS 12/13 guests can't change resolution while running: don't ask them to, reshape the window to their display instead.
+    var fixedDisplay = false
 
     func makeNSView(context: Context) -> VZVirtualMachineView {
         let view = VZVirtualMachineView()
         view.capturesSystemKeys = true
-        view.automaticallyReconfiguresDisplay = retina
+        view.automaticallyReconfiguresDisplay = retina && !fixedDisplay
         context.coordinator.view = view
         context.coordinator.retina = retina
         context.coordinator.resizesGuest = resizesGuest
@@ -1265,7 +1267,8 @@ struct ContentView: View {
 
             ZStack {
                 if let machine = vm.machine, vm.running {
-                    VMView(machine: machine, retina: vm.guest.isMac, windowsAgent: vm.guest == .windows)
+                    VMView(machine: machine, retina: vm.guest.isMac, windowsAgent: vm.guest == .windows,
+                           fixedDisplay: vm.guest.isMac && (vm.guestMajorVersion ?? 14) < 14)
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "desktopcomputer").font(.system(size: 64))
