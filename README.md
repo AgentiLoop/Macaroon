@@ -2,7 +2,7 @@
 
 A simple GUI app for running Mac, Windows and Linux virtual machines on Apple silicon, built on Apple's Virtualization framework. Pick a guest, click Download & Install, then Start: no command line needed. Runs macOS, Windows 11 ARM and Linux.
 
-Version 1.4.
+Version 1.0.0 (1).
 
 ## Use
 

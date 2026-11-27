@@ -24,8 +24,8 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Macaroon
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         INFOPLIST_KEY_NSMicrophoneUsageDescription: Lets virtual machines record from your microphone.
-        MARKETING_VERSION: "1.4"
-        CURRENT_PROJECT_VERSION: 4
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: 1
     entitlements:
       path: Macaroon/Macaroon.entitlements
       properties:
