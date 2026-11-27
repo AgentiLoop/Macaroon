@@ -713,7 +713,12 @@ final class MacaroonVM: NSObject, ObservableObject, VZVirtualMachineDelegate, UR
         config.graphicsDevices = [graphics]
 
         config.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: diskURL, readOnly: false))]
-        config.keyboards = [VZMacKeyboardConfiguration()]
+        // The Mac keyboard needs macOS 14 in the guest; older guests don't see it and ask to pair a Bluetooth one.
+        if let major = guestMajorVersion, major < 14 {
+            config.keyboards = [VZUSBKeyboardConfiguration()]
+        } else {
+            config.keyboards = [VZMacKeyboardConfiguration()]
+        }
         config.pointingDevices = [VZMacTrackpadConfiguration(), VZUSBScreenCoordinatePointingDeviceConfiguration()]
         try addCommonDevices(to: config)
         try config.validate()
